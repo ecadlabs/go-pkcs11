@@ -47,6 +47,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
+	asn1enc "encoding/asn1"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -253,18 +255,18 @@ func (m *Module) Close() error {
 // C_InitPIN to set the admin and user PIN on the slot.
 func (m *Module) createSlot(id uint, opts createSlotOptions) error {
 	if opts.Label == "" {
-		return fmt.Errorf("no label provided")
+		return errors.New("no label provided")
 	}
 	if opts.UserPIN == "" {
-		return fmt.Errorf("no user pin provided")
+		return errors.New("no user pin provided")
 	}
 	if opts.SecurityOfficerPIN == "" {
-		return fmt.Errorf("no admin pin provided")
+		return errors.New("no admin pin provided")
 	}
 
 	var cLabel [32]C.CK_UTF8CHAR
 	if !ckStringPadded(cLabel[:], opts.Label) {
-		return fmt.Errorf("label is too long")
+		return errors.New("label is too long")
 	}
 
 	cPIN := []C.CK_UTF8CHAR(opts.SecurityOfficerPIN)
@@ -489,7 +491,7 @@ func (s *Slot) Close() error {
 // TODO(ericchiang): merge with SlotInitialize.
 func (s *Slot) initPIN(pin string) error {
 	if pin == "" {
-		return fmt.Errorf("invalid pin")
+		return errors.New("invalid pin")
 	}
 	cPIN := []C.CK_UTF8CHAR(pin)
 	cPINLen := C.CK_ULONG(len(cPIN))
@@ -559,13 +561,13 @@ func (s *Slot) create(opts createOptions) (*Object, error) {
 	if opts.X509Certificate != nil {
 		return s.createX509Certificate(opts)
 	}
-	return nil, fmt.Errorf("no objects provided to import")
+	return nil, errors.New("no objects provided to import")
 }
 
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959709
 func (s *Slot) createX509Certificate(opts createOptions) (*Object, error) {
 	if opts.X509Certificate == nil {
-		return nil, fmt.Errorf("no certificate provided")
+		return nil, errors.New("no certificate provided")
 	}
 
 	objClass := C.CK_OBJECT_CLASS(C.CKO_CERTIFICATE)
@@ -839,6 +841,12 @@ func (o *Object) rsaPublicKey() (crypto.PublicKey, error) {
 	return &rsa.PublicKey{N: &n, E: int(e.Int64())}, nil
 }
 
+var (
+	oidCurveP256 = asn1enc.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
+	oidCurveP384 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 34}
+	oidCurveP521 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 35}
+)
+
 func (o *Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398881
 	attrs, err := o.getAttributesBytes([]attrType{C.CKA_EC_PARAMS, C.CKA_EC_POINT}, false)
@@ -846,18 +854,22 @@ func (o *Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 		return nil, err
 	}
 
-	paramBytes := attrs[0]
 	pointBytes := attrs[1]
+	paramBytes := cryptobyte.String(attrs[0])
+	var oid asn1enc.ObjectIdentifier
+	if !paramBytes.ReadASN1ObjectIdentifier(&oid) {
+		return nil, errors.New("pkcs11: error reading key OID")
+	}
 
 	var curve elliptic.Curve
-	if bytes.Equal(paramBytes, p256OIDRaw) {
+	if oid.Equal(oidCurveP256) {
 		curve = elliptic.P256()
-	} else if bytes.Equal(paramBytes, p384OIDRaw) {
+	} else if oid.Equal(oidCurveP384) {
 		curve = elliptic.P384()
-	} else if bytes.Equal(paramBytes, p521OIDRaw) {
+	} else if oid.Equal(oidCurveP521) {
 		curve = elliptic.P521()
 	} else {
-		return nil, fmt.Errorf("pkcs11: unsupported curve OID")
+		return nil, errors.New("pkcs11: unsupported curve OID")
 	}
 
 	ptObj := cryptobyte.String(pointBytes)
@@ -867,7 +879,7 @@ func (o *Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 	}
 	x, y := elliptic.Unmarshal(curve, pt)
 	if x == nil {
-		return nil, fmt.Errorf("pkcs11: invalid point format")
+		return nil, errors.New("pkcs11: invalid point format")
 	}
 	return &ecdsa.PublicKey{
 		Curve: curve,
@@ -937,7 +949,7 @@ func (r *rsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts)
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398842
 	size := opts.HashFunc().Size()
 	if size != len(digest) {
-		return nil, fmt.Errorf("pkcs11: input must be hashed")
+		return nil, errors.New("pkcs11: input must be hashed")
 	}
 	prefix, ok := hashPrefixes[opts.HashFunc()]
 	if !ok {
@@ -1159,7 +1171,7 @@ type keyOptions struct {
 // key objects.
 func (s *Slot) generate(opts keyOptions) (crypto.PrivateKey, error) {
 	if opts.ECDSACurve != nil && opts.RSABits != 0 {
-		return nil, fmt.Errorf("conflicting key parameters provided")
+		return nil, errors.New("conflicting key parameters provided")
 	}
 	if opts.ECDSACurve != nil {
 		return s.generateECDSA(opts)
@@ -1167,7 +1179,7 @@ func (s *Slot) generate(opts keyOptions) (crypto.PrivateKey, error) {
 	if opts.RSABits != 0 {
 		return s.generateRSA(opts)
 	}
-	return nil, fmt.Errorf("no key parameters provided")
+	return nil, errors.New("no key parameters provided")
 }
 
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959719
@@ -1255,15 +1267,6 @@ func (s *Slot) generateRSA(o keyOptions) (crypto.PrivateKey, error) {
 	return priv, nil
 }
 
-// https://datatracker.ietf.org/doc/html/rfc5480#section-2.1.1.1
-//
-// Generated with https://play.golang.org/p/tkqXov5Xpwp
-var (
-	p256OIDRaw = []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}
-	p384OIDRaw = []byte{0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22}
-	p521OIDRaw = []byte{0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23}
-)
-
 // generateECDSA implements the CKM_ECDSA_KEY_PAIR_GEN mechanism.
 //
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959719
@@ -1279,24 +1282,28 @@ func (s *Slot) generateECDSA(o keyOptions) (crypto.PrivateKey, error) {
 	)
 
 	if o.ECDSACurve == nil {
-		return nil, fmt.Errorf("no curve provided")
+		return nil, errors.New("no curve provided")
 	}
 
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 
-	var oid []byte
+	var oid asn1enc.ObjectIdentifier
 	switch o.ECDSACurve.Params().Name {
 	case "P-256":
-		oid = p256OIDRaw
+		oid = oidCurveP256
 	case "P-384":
-		oid = p384OIDRaw
+		oid = oidCurveP384
 	case "P-521":
-		oid = p521OIDRaw
+		oid = oidCurveP521
 	default:
-		return nil, fmt.Errorf("unsupported ECDSA curve")
+		return nil, errors.New("unsupported ECDSA curve")
 	}
-	pinner.Pin(&oid[0])
+
+	var oidBuilder cryptobyte.Builder
+	oidBuilder.AddASN1ObjectIdentifier(oid)
+	ecParam, _ := oidBuilder.Bytes()
+	pinner.Pin(&ecParam[0])
 
 	cTrue := C.CK_BBOOL(C.CK_TRUE)
 	cFalse := C.CK_BBOOL(C.CK_FALSE)
@@ -1321,7 +1328,7 @@ func (s *Slot) generateECDSA(o keyOptions) (crypto.PrivateKey, error) {
 	}
 
 	pubTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_EC_PARAMS, C.CK_VOID_PTR(&oid[0]), C.CK_ULONG(len(oid))},
+		{C.CKA_EC_PARAMS, C.CK_VOID_PTR(&ecParam[0]), C.CK_ULONG(len(ecParam))},
 		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
 	}
 	if o.LabelPublic != "" {
