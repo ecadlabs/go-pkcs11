@@ -1,4 +1,5 @@
 // Copyright 2021 Google LLC
+// Copyright 2024 ECAD Labs Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,245 +16,29 @@
 // Package pkcs11 implements logic for using PKCS #11 shared libraries.
 package pkcs11
 
+//go:generate go run ../gen/generate.go -i platform.h -g generated.go -p pkcs11
+
 /*
+#cgo linux LDFLAGS: -ldl
+
 #include <dlfcn.h>
-#include <stdlib.h>
 
-#define CK_PTR *
-#define CK_DECLARE_FUNCTION(returnType, name) \
-  returnType name
-#define CK_DECLARE_FUNCTION_POINTER(returnType, name) \
-  returnType (* name)
-#define CK_CALLBACK_FUNCTION(returnType, name) \
-  returnType (* name)
-#ifndef NULL_PTR
-#define NULL_PTR 0
-#endif
+#include "platform.h"
 
-#include "../third_party/pkcs11/pkcs11.h"
-
-// Go can't call a C function pointer directly, so these are wrappers that
-// perform the dereference in C.
-
-CK_RV get_function_list(CK_C_GetFunctionList fn, CK_FUNCTION_LIST_PTR_PTR p) {
-	return (*fn)(p);
-}
-
-CK_RV ck_initialize(CK_FUNCTION_LIST_PTR fl, CK_C_INITIALIZE_ARGS_PTR args) {
-	return (*fl->C_Initialize)((CK_VOID_PTR)(args));
-}
-
-CK_RV ck_finalize(CK_FUNCTION_LIST_PTR fl) {
-	return (*fl->C_Finalize)(NULL_PTR);
-}
-
-CK_RV ck_init_token(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SLOT_ID      slotID,
-	CK_UTF8CHAR_PTR pPin,
-	CK_ULONG        ulPinLen,
-	CK_UTF8CHAR_PTR pLabel
-) {
-	if (ulPinLen == 0) {
-		// TODO(ericchiang): This isn't tested since softhsm requires a PIN.
-		pPin = NULL_PTR;
+CK_RV open_library(const char *path, void **module, CK_FUNCTION_LIST_PTR_PTR p) {
+	*module = dlopen(path, RTLD_LAZY);
+	if (*module == NULL) {
+		return (CK_RV)(-1);
 	}
-	return (*fl->C_InitToken)(slotID, pPin, ulPinLen, pLabel);
-}
-
-CK_RV ck_get_slot_list(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SLOT_ID_PTR pSlotList,
-	CK_ULONG_PTR pulCount
-) {
-	return (*fl->C_GetSlotList)(CK_FALSE, pSlotList, pulCount);
-}
-
-CK_RV ck_get_info(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_INFO_PTR pInfo
-) {
-	return (*fl->C_GetInfo)(pInfo);
-}
-
-CK_RV ck_get_slot_info(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SLOT_ID slotID,
-	CK_SLOT_INFO_PTR pInfo
-) {
-	return (*fl->C_GetSlotInfo)(slotID, pInfo);
-}
-
-CK_RV ck_get_token_info(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SLOT_ID slotID,
-	CK_TOKEN_INFO_PTR pInfo
-) {
-	return (*fl->C_GetTokenInfo)(slotID, pInfo);
-}
-
-CK_RV ck_open_session(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SLOT_ID slotID,
-	CK_FLAGS flags,
-	CK_SESSION_HANDLE_PTR phSession
-) {
-	return (*fl->C_OpenSession)(slotID, flags, NULL_PTR, NULL_PTR, phSession);
-}
-
-CK_RV ck_close_session(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession
-) {
-	return (*fl->C_CloseSession)(hSession);
-}
-
-CK_RV ck_login(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_USER_TYPE userType,
-	CK_UTF8CHAR_PTR pPin,
-	CK_ULONG ulPinLen
-) {
-	return (*fl->C_Login)(hSession, userType, pPin, ulPinLen);
-}
-
-CK_RV ck_logout(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession
-) {
-	return (*fl->C_Logout)(hSession);
-}
-
-CK_RV ck_init_pin(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_UTF8CHAR_PTR pPin,
-	CK_ULONG ulPinLen
-) {
-	return (*fl->C_InitPIN)(hSession, pPin, ulPinLen);
-}
-
-CK_RV ck_generate_key_pair(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_MECHANISM_PTR pMechanism,
-	CK_ATTRIBUTE_PTR pPublicKeyTemplate,
-	CK_ULONG ulPublicKeyAttributeCount,
-	CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
-	CK_ULONG ulPrivateKeyAttributeCount,
-	CK_OBJECT_HANDLE_PTR phPublicKey,
-	CK_OBJECT_HANDLE_PTR phPrivateKey
-) {
-	return (*fl->C_GenerateKeyPair)(
-		hSession,
-		pMechanism,
-		pPublicKeyTemplate,
-		ulPublicKeyAttributeCount,
-		pPrivateKeyTemplate,
-		ulPrivateKeyAttributeCount,
-		phPublicKey,
-		phPrivateKey
-	);
-}
-
-CK_RV ck_find_objects_init(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_ATTRIBUTE_PTR pTemplate,
-	CK_ULONG ulCount
-) {
-	return (*fl->C_FindObjectsInit)(hSession, pTemplate, ulCount);
-}
-
-CK_RV ck_find_objects(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_OBJECT_HANDLE_PTR phObject,
-	CK_ULONG ulMaxObjectCount,
-	CK_ULONG_PTR pulObjectCount
-) {
-	return (*fl->C_FindObjects)(hSession, phObject, ulMaxObjectCount, pulObjectCount);
-}
-
-CK_RV ck_find_objects_final(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession
-) {
-	return (*fl->C_FindObjectsFinal)(hSession);
-}
-
-CK_RV ck_create_object(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_ATTRIBUTE_PTR pTemplate,
-	CK_ULONG ulCount,
-	CK_OBJECT_HANDLE_PTR phObject
-) {
-	return (*fl->C_CreateObject)(hSession, pTemplate, ulCount, phObject);
-}
-
-CK_RV ck_get_attribute_value(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_OBJECT_HANDLE hObject,
-	CK_ATTRIBUTE_PTR pTemplate,
-	CK_ULONG ulCount
-) {
-	return (*fl->C_GetAttributeValue)(hSession, hObject, pTemplate, ulCount);
-}
-
-CK_RV ck_set_attribute_value(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_OBJECT_HANDLE hObject,
-	CK_ATTRIBUTE_PTR pTemplate,
-	CK_ULONG ulCount
-) {
-	return (*fl->C_SetAttributeValue)(hSession, hObject, pTemplate, ulCount);
-}
-
-CK_RV ck_sign_init(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_MECHANISM_PTR pMechanism,
-	CK_OBJECT_HANDLE hKey
-) {
-	return (*fl->C_SignInit)(hSession, pMechanism, hKey);
-}
-
-CK_RV ck_sign(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_BYTE_PTR pData,
-	CK_ULONG ulDataLen,
-	CK_BYTE_PTR pSignature,
-	CK_ULONG_PTR pulSignatureLen
-) {
-	return (*fl->C_Sign)(hSession, pData, ulDataLen, pSignature, pulSignatureLen);
-}
-
-CK_RV ck_decrypt_init(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_MECHANISM_PTR  pMechanism,
-	CK_OBJECT_HANDLE  hKey
-) {
-	return (*fl->C_DecryptInit)(hSession, pMechanism, hKey);
-}
-
-CK_RV ck_decrypt(
-	CK_FUNCTION_LIST_PTR fl,
-	CK_SESSION_HANDLE hSession,
-	CK_BYTE_PTR       pEncryptedData,
-	CK_ULONG          ulEncryptedDataLen,
-	CK_BYTE_PTR       pData,
-	CK_ULONG_PTR      pulDataLen
-) {
-	return (*fl->C_Decrypt)(hSession, pEncryptedData,  ulEncryptedDataLen, pData, pulDataLen);
+	CK_C_GetFunctionList getFunctionList = dlsym(*module, "C_GetFunctionList");
+	if (getFunctionList == NULL) {
+		dlclose(*module);
+		*module = NULL;
+		return (CK_RV)(-1);
+	}
+	return getFunctionList(p);
 }
 */
-// #cgo linux LDFLAGS: -ldl
 import "C"
 import (
 	"bytes"
@@ -266,6 +51,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"runtime"
 	"strings"
 	"unsafe"
 )
@@ -276,47 +62,11 @@ func ckStringPadded(b []C.CK_UTF8CHAR, s string) bool {
 	if len(s) > len(b) {
 		return false
 	}
-	for i := range b {
-		if i < len(s) {
-			b[i] = C.CK_UTF8CHAR(s[i])
-		} else {
-			b[i] = C.CK_UTF8CHAR(' ')
-		}
+	copy(b, []C.CK_UTF8CHAR(s))
+	for i := len(s); i < len(b); i++ {
+		b[i] = ' '
 	}
 	return true
-}
-
-// ckString converts a Go string to a cryptokit string. The string is still held
-// by Go memory and doesn't need to be freed.
-func ckString(s string) []C.CK_UTF8CHAR {
-	b := make([]C.CK_UTF8CHAR, len(s))
-	for i, c := range []byte(s) {
-		b[i] = C.CK_UTF8CHAR(c)
-	}
-	return b
-}
-
-// ckCString converts a Go string to a cryptokit string held by C. This is required,
-// for example, when building a CK_ATTRIBUTE, which needs to hold a pointer to a
-// cryptokit string.
-//
-// This method also returns a function to free the allocated C memory.
-func ckCString(s string) (cstring *C.CK_UTF8CHAR, free func()) {
-	b := (*C.CK_UTF8CHAR)(C.malloc(C.sizeof_CK_UTF8CHAR * C.ulong(len(s))))
-	bs := unsafe.Slice(b, len(s))
-	for i, c := range []byte(s) {
-		bs[i] = C.CK_UTF8CHAR(c)
-	}
-	return b, func() { C.free(unsafe.Pointer(b)) }
-}
-
-func ckGoString(s *C.CK_UTF8CHAR, n C.CK_ULONG) string {
-	var sb strings.Builder
-	sli := unsafe.Slice(s, n)
-	for _, b := range sli {
-		sb.WriteByte(byte(b))
-	}
-	return sb.String()
 }
 
 // Error is returned for cryptokit specific API codes.
@@ -423,13 +173,6 @@ var ckRVString = map[C.CK_RV]string{
 	C.CKR_VENDOR_DEFINED:                   "CKR_VENDOR_DEFINED",
 }
 
-func isOk(fnName string, rv C.CK_RV) error {
-	if rv == C.CKR_OK {
-		return nil
-	}
-	return &Error{fnName, rv}
-}
-
 // Module represents an opened shared library. By default, this package
 // requests locking support from the module, but concurrent safety may
 // depend on the underlying library.
@@ -438,7 +181,7 @@ type Module struct {
 	// when the Module is closed.
 	mod unsafe.Pointer
 	// List of C functions provided by the module.
-	fl C.CK_FUNCTION_LIST_PTR
+	ft functionTable
 	// Version of the module, used for compatibility.
 	version C.CK_VERSION
 
@@ -450,48 +193,40 @@ func Open(path string) (*Module, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 
-	mod := C.dlopen(cPath, C.RTLD_NOW)
-	if mod == nil {
-		return nil, fmt.Errorf("pkcs11: dlopen error: %s", C.GoString(C.dlerror()))
-	}
+	var (
+		module unsafe.Pointer
+		funcs  C.CK_FUNCTION_LIST_PTR
+	)
 
-	cSym := C.CString("C_GetFunctionList")
-	defer C.free(unsafe.Pointer(cSym))
-
-	getFuncListFn := (C.CK_C_GetFunctionList)(C.dlsym(mod, cSym))
-	if getFuncListFn == nil {
-		err := fmt.Errorf("pkcs11: lookup function list symbol: %s", C.GoString(C.dlerror()))
-		C.dlclose(mod)
-		return nil, err
+	ret := C.open_library(cPath, &module, &funcs)
+	if ret != C.CKR_OK {
+		if module == nil {
+			return nil, fmt.Errorf("pkcs11: error opening library: %s", C.GoString(C.dlerror()))
+		}
+		return nil, &Error{fnName: "C_GetFunctionList", code: ret}
 	}
-
-	var p C.CK_FUNCTION_LIST_PTR
-	rv := C.get_function_list(getFuncListFn, &p)
-	if err := isOk("C_GetFunctionList", rv); err != nil {
-		C.dlclose(mod)
-		return nil, err
-	}
+	ft := functionTable{t: funcs}
 
 	args := C.CK_C_INITIALIZE_ARGS{
 		flags: C.CKF_OS_LOCKING_OK,
 	}
-	if err := isOk("C_Initialize", C.ck_initialize(p, &args)); err != nil {
-		C.dlclose(mod)
+	if err := ft.C_Initialize(C.CK_VOID_PTR(unsafe.Pointer(&args))); err != nil {
+		C.dlclose(module)
 		return nil, err
 	}
 
 	var info C.CK_INFO
-	if err := isOk("C_GetInfo", C.ck_get_info(p, &info)); err != nil {
-		C.dlclose(mod)
+	if err := ft.C_GetInfo(&info); err != nil {
+		C.dlclose(module)
 		return nil, err
 	}
 
 	return &Module{
-		mod:     mod,
-		fl:      p,
+		mod:     module,
+		ft:      ft,
 		version: info.cryptokiVersion,
 		info: Info{
-			Manufacturer: toString(info.manufacturerID[:]),
+			Manufacturer: trimPadding(info.manufacturerID[:]),
 			Version: Version{
 				Major: uint8(info.libraryVersion.major),
 				Minor: uint8(info.libraryVersion.minor),
@@ -503,7 +238,7 @@ func Open(path string) (*Module, error) {
 // Close finalizes the module and releases any resources associated with the
 // shared library.
 func (m *Module) Close() error {
-	if err := isOk("C_Finalize", C.ck_finalize(m.fl)); err != nil {
+	if err := m.ft.C_Finalize(nil); err != nil {
 		return err
 	}
 	if C.dlclose(m.mod) != 0 {
@@ -514,50 +249,45 @@ func (m *Module) Close() error {
 
 // createSlot configures a slot object. Internally this calls C_InitToken and
 // C_InitPIN to set the admin and user PIN on the slot.
-func (m *Module) createSlot(id uint32, opts slotOptions) error {
+func (m *Module) createSlot(id uint, opts createSlotOptions) error {
 	if opts.Label == "" {
 		return fmt.Errorf("no label provided")
 	}
-	if opts.PIN == "" {
+	if opts.UserPIN == "" {
 		return fmt.Errorf("no user pin provided")
 	}
-	if opts.AdminPIN == "" {
+	if opts.SecurityOfficerPIN == "" {
 		return fmt.Errorf("no admin pin provided")
 	}
 
 	var cLabel [32]C.CK_UTF8CHAR
 	if !ckStringPadded(cLabel[:], opts.Label) {
-		return fmt.Errorf("pkcs11: label too long")
+		return fmt.Errorf("label is too long")
 	}
 
-	cPIN := ckString(opts.AdminPIN)
+	cPIN := []C.CK_UTF8CHAR(opts.SecurityOfficerPIN)
 	cPINLen := C.CK_ULONG(len(cPIN))
 
-	rv := C.ck_init_token(
-		m.fl,
+	err := m.ft.C_InitToken(
 		C.CK_SLOT_ID(id),
 		&cPIN[0],
 		cPINLen,
 		&cLabel[0],
 	)
-	if err := isOk("C_InitToken", rv); err != nil {
+	if err != nil {
 		return err
 	}
 
-	so := Options{
-		AdminPIN:  opts.AdminPIN,
-		ReadWrite: true,
-	}
-	s, err := m.Slot(id, so)
+	s, err := m.Slot(id, OptSecurityOfficerPIN(opts.SecurityOfficerPIN), OptReadWrite)
 	if err != nil {
 		return fmt.Errorf("getting slot: %w", err)
 	}
 	defer s.Close()
-	if err := s.initPIN(opts.PIN); err != nil {
+	if err := s.initPIN(opts.UserPIN); err != nil {
 		return fmt.Errorf("configuring user pin: %w", err)
 	}
 	if err := s.logout(); err != nil {
-		return fmt.Errorf("logout: %v", err)
+		return fmt.Errorf("logout: %w", err)
 	}
 	return nil
 }
@@ -566,14 +296,12 @@ func (m *Module) createSlot(id uint32, opts slotOptions) error {
 // ones that haven't been initialized.
 func (m *Module) SlotIDs() ([]uint32, error) {
 	var n C.CK_ULONG
-	rv := C.ck_get_slot_list(m.fl, nil, &n)
-	if err := isOk("C_GetSlotList", rv); err != nil {
+	if err := m.ft.C_GetSlotList(C.CK_FALSE, nil, &n); err != nil {
 		return nil, err
 	}
 
 	l := make([]C.CK_SLOT_ID, int(n))
-	rv = C.ck_get_slot_list(m.fl, &l[0], &n)
-	if err := isOk("C_GetSlotList", rv); err != nil {
+	if err := m.ft.C_GetSlotList(C.CK_FALSE, &l[0], &n); err != nil {
 		return nil, err
 	}
 	if int(n) > len(l) {
@@ -614,20 +342,8 @@ type SlotInfo struct {
 	Description string
 }
 
-func toString(b []C.uchar) string {
-	lastIndex := len(b)
-	for i := len(b); i > 0; i-- {
-		if b[i-1] != C.uchar(' ') {
-			break
-		}
-		lastIndex = i - 1
-	}
-
-	var sb strings.Builder
-	for _, c := range b[:lastIndex] {
-		sb.WriteByte(byte(c))
-	}
-	return sb.String()
+func trimPadding(b []C.CK_UTF8CHAR) string {
+	return strings.TrimRight(string(b), " ")
 }
 
 // Info returns additional information about the module.
@@ -642,24 +358,22 @@ func (m *Module) SlotInfo(id uint32) (*SlotInfo, error) {
 		cTokenInfo C.CK_TOKEN_INFO
 		slotID     = C.CK_SLOT_ID(id)
 	)
-	rv := C.ck_get_slot_info(m.fl, slotID, &cSlotInfo)
-	if err := isOk("C_GetSlotInfo", rv); err != nil {
+	if err := m.ft.C_GetSlotInfo(slotID, &cSlotInfo); err != nil {
 		return nil, err
 	}
 	info := SlotInfo{
-		Description: toString(cSlotInfo.slotDescription[:]),
+		Description: trimPadding(cSlotInfo.slotDescription[:]),
 	}
 	if (cSlotInfo.flags & C.CKF_TOKEN_PRESENT) == 0 {
 		return &info, nil
 	}
 
-	rv = C.ck_get_token_info(m.fl, slotID, &cTokenInfo)
-	if err := isOk("C_GetTokenInfo", rv); err != nil {
+	if err := m.ft.C_GetTokenInfo(slotID, &cTokenInfo); err != nil {
 		return nil, err
 	}
-	info.Label = toString(cTokenInfo.label[:])
-	info.Model = toString(cTokenInfo.model[:])
-	info.Serial = toString(cTokenInfo.serialNumber[:])
+	info.Label = trimPadding(cTokenInfo.label[:])
+	info.Model = trimPadding(cTokenInfo.model[:])
+	info.Serial = trimPadding(cTokenInfo.serialNumber[:])
 	return &info, nil
 }
 
@@ -668,64 +382,95 @@ func (m *Module) SlotInfo(id uint32) (*SlotInfo, error) {
 // A slot holds a listable set of objects, such as certificates and
 // cryptographic keys.
 type Slot struct {
-	fl C.CK_FUNCTION_LIST_PTR
+	ft functionTable
 	h  C.CK_SESSION_HANDLE
 }
 
-type slotOptions struct {
-	AdminPIN string
-	PIN      string
-	Label    string
+type createSlotOptions struct {
+	SecurityOfficerPIN string
+	UserPIN            string
+	Label              string
 }
 
-// Options holds configuration options for the slot session.
-type Options struct {
-	PIN      string
-	AdminPIN string
-	// ReadWrite indicates that the slot should be opened with write capabilities,
-	// such as generating keys or importing certificates.
-	//
-	// By default, sessions can access objects and perform signing requests.
-	ReadWrite bool
+type SlotOption func(o *slotOptions)
+
+type slotOptions struct {
+	pin      string
+	userType UserType
+	flags    C.CK_FLAGS
 }
+
+type UserType uint
+
+const (
+	UserTypeNormal          = UserType(C.CKU_USER)
+	UserTypeSecurityOfficer = UserType(C.CKU_SO)
+)
+
+func (u UserType) String() string {
+	switch u {
+	case UserTypeNormal:
+		return "CKU_USER"
+	case UserTypeSecurityOfficer:
+		return "CKU_SO"
+	default:
+		return fmt.Sprintf("UserType(0x%08x)", uint(u))
+	}
+}
+
+func OptPIN(pin string) SlotOption {
+	return func(o *slotOptions) { o.pin = pin }
+}
+
+// OptUserPIN is an alias for OptPIN + OptUserType(UserTypeNormal)
+func OptUserPIN(pin string) SlotOption {
+	return func(o *slotOptions) {
+		o.pin = pin
+		o.userType = UserTypeNormal
+	}
+}
+
+// OptUserPIN is an alias for OptPIN + OptUserType(UserTypeSecurityOfficer)
+func OptSecurityOfficerPIN(pin string) SlotOption {
+	return func(o *slotOptions) {
+		o.pin = pin
+		o.userType = UserTypeSecurityOfficer
+	}
+}
+
+func OptUserType(ut UserType) SlotOption {
+	return func(o *slotOptions) { o.userType = ut }
+}
+
+func OptReadWrite(o *slotOptions) { o.flags |= C.CKF_RW_SESSION }
 
 // Slot creates a session with the given slot, by default read-only. Users
 // must call Close to release the session.
 //
 // The returned Slot's behavior is undefined once the Module is closed.
-func (m *Module) Slot(id uint32, opts Options) (*Slot, error) {
-	if opts.AdminPIN != "" && opts.PIN != "" {
-		return nil, fmt.Errorf("can't specify pin and admin pin")
+func (m *Module) Slot(id uint, opts ...SlotOption) (*Slot, error) {
+	var so slotOptions
+	for _, o := range opts {
+		o(&so)
 	}
 
 	var (
-		h      C.CK_SESSION_HANDLE
-		slotID = C.CK_SLOT_ID(id)
+		h C.CK_SESSION_HANDLE
 		// "For legacy reasons, the CKF_SERIAL_SESSION bit MUST always be set".
 		//
 		// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959742
 		flags C.CK_FLAGS = C.CKF_SERIAL_SESSION
 	)
+	flags |= so.flags
 
-	if opts.ReadWrite {
-		flags = flags | C.CKF_RW_SESSION
-	}
-
-	rv := C.ck_open_session(m.fl, slotID, flags, &h)
-	if err := isOk("C_OpenSession", rv); err != nil {
+	if err := m.ft.C_OpenSession(C.CK_SLOT_ID(id), flags, nil, nil, &h); err != nil {
 		return nil, err
 	}
 
-	s := &Slot{fl: m.fl, h: h}
-
-	if opts.PIN != "" {
-		if err := s.login(opts.PIN); err != nil {
-			s.Close()
-			return nil, err
-		}
-	}
-	if opts.AdminPIN != "" {
-		if err := s.loginAdmin(opts.AdminPIN); err != nil {
+	s := &Slot{ft: m.ft, h: h}
+	if so.pin != "" {
+		cPIN := []C.CK_UTF8CHAR(so.pin)
+		if err := s.ft.C_Login(s.h, C.CK_USER_TYPE(so.userType), &cPIN[0], C.CK_ULONG(len(cPIN))); err != nil {
 			s.Close()
 			return nil, err
 		}
@@ -736,7 +481,7 @@ func (m *Module) Slot(id uint32, opts Options) (*Slot, error) {
 
 // Close releases the slot session.
 func (s *Slot) Close() error {
-	return isOk("C_CloseSession", C.ck_close_session(s.fl, s.h))
+	return s.ft.C_CloseSession(s.h)
 }
 
 // TODO(ericchiang): merge with SlotInitialize.
@@ -744,48 +489,31 @@ func (s *Slot) initPIN(pin string) error {
 	if pin == "" {
 		return fmt.Errorf("invalid pin")
 	}
-	cPIN := ckString(pin)
+	cPIN := []C.CK_UTF8CHAR(pin)
 	cPINLen := C.CK_ULONG(len(cPIN))
-	return isOk("C_InitPIN", C.ck_init_pin(s.fl, s.h, &cPIN[0], cPINLen))
+	return s.ft.C_InitPIN(s.h, &cPIN[0], cPINLen)
 }
 
 func (s *Slot) logout() error {
-	return isOk("C_Logout", C.ck_logout(s.fl, s.h))
-}
-
-func (s *Slot) login(pin string) error {
-	// TODO(ericchiang): check for CKR_USER_ALREADY_LOGGED_IN and auto logout.
-	if pin == "" {
-		return fmt.Errorf("invalid pin")
-	}
-	cPIN := ckString(pin)
-	cPINLen := C.CK_ULONG(len(cPIN))
-	return isOk("C_Login", C.ck_login(s.fl, s.h, C.CKU_USER, &cPIN[0], cPINLen))
-}
-
-func (s *Slot) loginAdmin(adminPIN string) error {
-	// TODO(ericchiang): maybe run commands, detect CKR_USER_NOT_LOGGED_IN, then
-	// automatically login?
-	if adminPIN == "" {
-		return fmt.Errorf("invalid admin pin")
-	}
-	cPIN := ckString(adminPIN)
-	cPINLen := C.CK_ULONG(len(cPIN))
-	return isOk("C_Login", C.ck_login(s.fl, s.h, C.CKU_SO, &cPIN[0], cPINLen))
+	return s.ft.C_Logout(s.h)
 }
 
 // Class is the primary object type. Such as a certificate, public key, or
 // private key.
-type Class int
+type Class uint
 
 // Set of classes supported by this package.
 const (
-	ClassData             Class = 0x00000000
-	ClassCertificate      Class = 0x00000001
-	ClassPublicKey        Class = 0x00000002
-	ClassPrivateKey       Class = 0x00000003
-	ClassSecretKey        Class = 0x00000004
-	ClassDomainParameters Class = 0x00000006
+	ClassData             = Class(C.CKO_DATA)
+	ClassCertificate      = Class(C.CKO_CERTIFICATE)
+	ClassPublicKey        = Class(C.CKO_PUBLIC_KEY)
+	ClassPrivateKey       = Class(C.CKO_PRIVATE_KEY)
+	ClassSecretKey        = Class(C.CKO_SECRET_KEY)
+	ClassHWFeature        = Class(C.CKO_HW_FEATURE)
+	ClassDomainParameters = Class(C.CKO_DOMAIN_PARAMETERS)
+	ClassMechanism        = Class(C.CKO_MECHANISM)
+	ClassOTPKey           = Class(C.CKO_OTP_KEY)
+	ClassVendorDefined    = Class(C.CKO_VENDOR_DEFINED)
 )
 
 var classString = map[Class]string{
@@ -794,7 +522,11 @@ var classString = map[Class]string{
 	ClassPublicKey:        "CKO_PUBLIC_KEY",
 	ClassPrivateKey:       "CKO_PRIVATE_KEY",
 	ClassSecretKey:        "CKO_SECRET_KEY",
+	ClassHWFeature:        "CKO_HW_FEATURE",
 	ClassDomainParameters: "CKO_DOMAIN_PARAMETERS",
+	ClassMechanism:        "CKO_MECHANISM",
+	ClassOTPKey:           "CKO_OTP_KEY",
+	ClassVendorDefined:    "CKO_VENDOR_DEFINED",
 }
 
 // String returns a human readable version of the object class.
@@ -805,36 +537,14 @@ func (c Class) String() string {
 	return fmt.Sprintf("Class(0x%08x)", int(c))
 }
 
-func (c Class) ckType() (C.CK_OBJECT_CLASS, bool) {
-	switch c {
-	case ClassData:
-		return C.CKO_DATA, true
-	case ClassCertificate:
-		return C.CKO_CERTIFICATE, true
-	case ClassPublicKey:
-		return C.CKO_PUBLIC_KEY, true
-	case ClassPrivateKey:
-		return C.CKO_PRIVATE_KEY, true
-	case ClassSecretKey:
-		return C.CKO_SECRET_KEY, true
-	case ClassDomainParameters:
-		return C.CKO_DOMAIN_PARAMETERS, true
-	}
-	return 0, false
-}
-
 func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (Object, error) {
-	objClass := C.CK_OBJECT_CLASS_PTR(C.malloc(C.sizeof_CK_OBJECT_CLASS))
-	defer C.free(unsafe.Pointer(objClass))
-
-	a := []C.CK_ATTRIBUTE{
-		{C.CKA_CLASS, C.CK_VOID_PTR(objClass), C.CK_ULONG(C.sizeof_CK_OBJECT_CLASS)},
-	}
-	rv := C.ck_get_attribute_value(s.fl, s.h, o, &a[0], C.CK_ULONG(len(a)))
-	if err := isOk("C_GetAttributeValue", rv); err != nil {
+	obj := Object{ft: s.ft, h: s.h, o: o}
+	objClass, err := getAttribute[C.CK_OBJECT_CLASS](&obj, C.CKA_CLASS)
+	if err != nil {
 		return Object{}, err
 	}
-	return Object{s.fl, s.h, o, *objClass}, nil
+	obj.c = objClass
+	return obj, nil
 }
 
 type createOptions struct {
@@ -855,41 +565,36 @@ func (s *Slot) createX509Certificate(opts createOptions) (*Object, error) {
 	if opts.X509Certificate == nil {
 		return nil, fmt.Errorf("no certificate provided")
 	}
-	objClass := (*C.CK_OBJECT_CLASS)(C.malloc(C.sizeof_CK_OBJECT_CLASS))
-	defer C.free(unsafe.Pointer(objClass))
-	*objClass = C.CKO_CERTIFICATE
 
-	ct := (*C.CK_CERTIFICATE_TYPE)(C.malloc(C.sizeof_CK_CERTIFICATE_TYPE))
-	defer C.free(unsafe.Pointer(ct))
-	*ct = C.CKC_X_509
+	objClass := C.CK_OBJECT_CLASS(C.CKO_CERTIFICATE)
+	ct := C.CK_CERTIFICATE_TYPE(C.CKC_X_509)
 
-	cSubj := C.CBytes(opts.X509Certificate.RawSubject)
-	defer C.free(cSubj)
-
-	cValue := C.CBytes(opts.X509Certificate.Raw)
-	defer C.free(cValue)
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(&objClass)
+	pinner.Pin(&ct)
+	pinner.Pin(&opts.X509Certificate.RawSubject[0])
+	pinner.Pin(&opts.X509Certificate.Raw[0])
 
 	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_CLASS, C.CK_VOID_PTR(objClass), C.CK_ULONG(C.sizeof_CK_OBJECT_CLASS)},
-		{C.CKA_CERTIFICATE_TYPE, C.CK_VOID_PTR(ct), C.CK_ULONG(C.sizeof_CK_CERTIFICATE_TYPE)},
-		{C.CKA_SUBJECT, C.CK_VOID_PTR(cSubj), C.CK_ULONG(len(opts.X509Certificate.RawSubject))},
-		{C.CKA_VALUE, C.CK_VOID_PTR(cValue), C.CK_ULONG(len(opts.X509Certificate.Raw))},
+		{C.CKA_CLASS, C.CK_VOID_PTR(&objClass), C.CK_ULONG(unsafe.Sizeof(objClass))},
+		{C.CKA_CERTIFICATE_TYPE, C.CK_VOID_PTR(&ct), C.CK_ULONG(unsafe.Sizeof(ct))},
+		{C.CKA_SUBJECT, C.CK_VOID_PTR(&opts.X509Certificate.RawSubject[0]), C.CK_ULONG(len(opts.X509Certificate.RawSubject))},
+		{C.CKA_VALUE, C.CK_VOID_PTR(&opts.X509Certificate.Raw[0]), C.CK_ULONG(len(opts.X509Certificate.Raw))},
 	}
 
 	if opts.Label != "" {
-		cs, free := ckCString(opts.Label)
-		defer free()
-
+		cs := []byte(opts.Label)
+		pinner.Pin(&cs[0])
 		attrs = append(attrs, C.CK_ATTRIBUTE{
 			C.CKA_LABEL,
-			C.CK_VOID_PTR(cs),
+			C.CK_VOID_PTR(&cs[0]),
 			C.CK_ULONG(len(opts.Label)),
 		})
 	}
 
 	var h C.CK_OBJECT_HANDLE
-	rv := C.ck_create_object(s.fl, s.h, &attrs[0], C.CK_ULONG(len(attrs)), &h)
-	if err := isOk("C_CreateObject", rv); err != nil {
+	if err := s.ft.C_CreateObject(s.h, &attrs[0], C.CK_ULONG(len(attrs)), &h); err != nil {
 		return nil, err
 	}
 	obj, err := s.newObject(h)
@@ -899,60 +604,68 @@ func (s *Slot) createX509Certificate(opts createOptions) (*Object, error) {
 	return &obj, nil
 }
 
-// Filter hold options for returning a subset of objects from a slot.
-//
-// The returned object will match all provided parameters. For example, if
-// Class=ClassPrivateKey and Label="foo", the returned object must be a
-// private key with label "foo".
-type Filter struct {
-	Class Class
-	Label string
+type filterOpt struct {
+	class *Class
+	label string
+}
+
+type Filter func(f *filterOpt)
+
+func FilterClass(c Class) Filter {
+	return func(f *filterOpt) {
+		f.class = &c
+	}
+}
+
+func FilterLabel(label string) Filter {
+	return func(f *filterOpt) {
+		f.label = label
+	}
 }
 
 // Objects searches a slot for objects that match the given options, or all
 // objects if no options are provided.
 //
 // The returned objects behavior is undefined once the Slot object is closed.
-func (s *Slot) Objects(opts Filter) (objs []Object, err error) {
-	var attrs []C.CK_ATTRIBUTE
-	if opts.Label != "" {
-		cs, free := ckCString(opts.Label)
-		defer free()
+func (s *Slot) Objects(opts ...Filter) (objs []Object, err error) {
+	var fil filterOpt
+	for _, f := range opts {
+		f(&fil)
+	}
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
 
+	var attrs []C.CK_ATTRIBUTE
+	if fil.label != "" {
+		cs := []byte(fil.label)
+		pinner.Pin(&cs[0])
 		attrs = append(attrs, C.CK_ATTRIBUTE{
 			C.CKA_LABEL,
-			C.CK_VOID_PTR(cs),
-			C.CK_ULONG(len(opts.Label)),
+			C.CK_VOID_PTR(&cs[0]),
+			C.CK_ULONG(len(fil.label)),
 		})
 	}
 
-	if opts.Class != 0 {
-		c, ok := Class(opts.Class).ckType()
-		if ok {
-			objClass := C.CK_OBJECT_CLASS_PTR(C.malloc(C.sizeof_CK_OBJECT_CLASS))
-			defer C.free(unsafe.Pointer(objClass))
-
-			*objClass = c
-			attrs = append(attrs, C.CK_ATTRIBUTE{
-				C.CKA_CLASS,
-				C.CK_VOID_PTR(objClass),
-				C.CK_ULONG(C.sizeof_CK_OBJECT_CLASS),
-			})
-		}
+	if fil.class != nil {
+		objClass := C.CK_OBJECT_CLASS(*fil.class)
+		pinner.Pin(&objClass)
+		attrs = append(attrs, C.CK_ATTRIBUTE{
+			_type:      C.CKA_CLASS,
+			pValue:     C.CK_VOID_PTR(&objClass),
+			ulValueLen: C.CK_ULONG(unsafe.Sizeof(objClass)),
+		})
 	}
 
-	var rv C.CK_RV
 	if len(attrs) > 0 {
-		rv = C.ck_find_objects_init(s.fl, s.h, &attrs[0], C.CK_ULONG(len(attrs)))
+		err = s.ft.C_FindObjectsInit(s.h, &attrs[0], C.CK_ULONG(len(attrs)))
 	} else {
-		rv = C.ck_find_objects_init(s.fl, s.h, nil, 0)
+		err = s.ft.C_FindObjectsInit(s.h, nil, 0)
 	}
-	if err := isOk("C_FindObjectsInit", rv); err != nil {
+	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		rv := C.ck_find_objects_final(s.fl, s.h)
-		if ferr := isOk("C_FindObjectsFinal", rv); ferr != nil && err == nil {
+		if ferr := s.ft.C_FindObjectsFinal(s.h); ferr != nil && err == nil {
 			err = ferr
 		}
 	}()
@@ -961,17 +674,13 @@ func (s *Slot) Objects(opts Filter) (objs []Object, err error) {
 	const objectsAtATime = 16
 	for {
 		cObjHandles := make([]C.CK_OBJECT_HANDLE, objectsAtATime)
-		cObjMax := C.CK_ULONG(objectsAtATime)
 		var n C.CK_ULONG
-
-		rv := C.ck_find_objects(s.fl, s.h, &cObjHandles[0], cObjMax, &n)
-		if err := isOk("C_FindObjects", rv); err != nil {
+		if err := s.ft.C_FindObjects(s.h, &cObjHandles[0], C.CK_ULONG(objectsAtATime), &n); err != nil {
 			return nil, err
 		}
 		if n == 0 {
 			break
 		}
-
 		handles = append(handles, cObjHandles[:int(n)]...)
 	}
 
@@ -988,7 +697,7 @@ func (s *Slot) Objects(opts Filter) (objs []Object, err error) {
 // Object represents a single object stored within a slot. For example a key or
 // certificate.
 type Object struct {
-	fl C.CK_FUNCTION_LIST_PTR
+	ft functionTable
 	h  C.CK_SESSION_HANDLE
 	o  C.CK_OBJECT_HANDLE
 	c  C.CK_OBJECT_CLASS
@@ -1000,43 +709,83 @@ func (o Object) Class() Class {
 	return Class(int(o.c))
 }
 
-func (o Object) getAttribute(attrs []C.CK_ATTRIBUTE) error {
-	return isOk("C_GetAttributeValue",
-		C.ck_get_attribute_value(o.fl, o.h, o.o, &attrs[0], C.CK_ULONG(len(attrs))),
+type attrType C.CK_ATTRIBUTE_TYPE
+
+func (o Object) getAttributesBytes(types []attrType, allowMissing bool) ([][]byte, error) {
+	attrs := make([]C.CK_ATTRIBUTE, len(types))
+	for i, t := range types {
+		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(t)
+	}
+	if err := o.ft.C_GetAttributeValue(o.h, o.o, &attrs[0], C.CK_ULONG(len(attrs))); err != nil {
+		return nil, err
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	out := make([][]byte, len(attrs))
+	for i := range attrs {
+		if attrs[i].ulValueLen == 0 {
+			if !allowMissing {
+				return nil, fmt.Errorf("pkcs11: missing attribute 0x%08x", attrs[i]._type)
+			}
+		} else {
+			buf := make([]byte, attrs[i].ulValueLen)
+			pinner.Pin(&buf[0])
+			attrs[i].pValue = C.CK_VOID_PTR(&buf[0])
+			out[i] = buf
+		}
+	}
+	if err := o.ft.C_GetAttributeValue(o.h, o.o, &attrs[0], C.CK_ULONG(len(attrs))); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func getAttribute[T any](o *Object, typ C.CK_ATTRIBUTE_TYPE) (T, error) {
+	var (
+		value  T
+		pinner runtime.Pinner
 	)
+	pinner.Pin(&value)
+	defer pinner.Unpin()
+	attr := C.CK_ATTRIBUTE{
+		_type:      typ,
+		pValue:     C.CK_VOID_PTR(&value),
+		ulValueLen: C.CK_ULONG(unsafe.Sizeof(value)),
+	}
+	if err := o.ft.C_GetAttributeValue(o.h, o.o, &attr, 1); err != nil {
+		return value, err
+	}
+	if attr.ulValueLen == 0 {
+		return value, fmt.Errorf("pkcs11: missing attribute 0x%08x", typ)
+	}
+	return value, nil
 }
 
 func (o Object) setAttribute(attrs []C.CK_ATTRIBUTE) error {
-	return isOk("C_SetAttributeValue",
-		C.ck_set_attribute_value(o.fl, o.h, o.o, &attrs[0], C.CK_ULONG(len(attrs))),
-	)
+	return o.ft.C_SetAttributeValue(o.h, o.o, &attrs[0], C.CK_ULONG(len(attrs)))
 }
 
 // Label returns a string value attached to an object, which can be used to
 // identify or group sets of keys and certificates.
 func (o Object) Label() (string, error) {
-	attrs := []C.CK_ATTRIBUTE{{C.CKA_LABEL, nil, 0}}
-	if err := o.getAttribute(attrs); err != nil {
+	v, err := o.getAttributesBytes([]attrType{C.CKA_LABEL}, false)
+	if err != nil {
 		return "", err
 	}
-	n := attrs[0].ulValueLen
-
-	cLabel := (*C.CK_UTF8CHAR)(C.malloc(C.ulong(n)))
-	defer C.free(unsafe.Pointer(cLabel))
-	attrs[0].pValue = C.CK_VOID_PTR(cLabel)
-
-	if err := o.getAttribute(attrs); err != nil {
-		return "", err
-	}
-	return ckGoString(cLabel, n), nil
+	return string(v[0]), err
 }
 
 // setLabel sets the label of the object overwriting any previous value.
 func (o Object) setLabel(s string) error {
-	cs, free := ckCString(s)
-	defer free()
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
 
-	attrs := []C.CK_ATTRIBUTE{{C.CKA_LABEL, C.CK_VOID_PTR(cs), C.CK_ULONG(len(s))}}
+	cs := []byte(s)
+	pinner.Pin(&cs[0])
+
+	attrs := []C.CK_ATTRIBUTE{{C.CKA_LABEL, C.CK_VOID_PTR(&cs[0]), C.CK_ULONG(len(s))}}
 	return o.setAttribute(attrs)
 }
 
@@ -1044,18 +793,13 @@ func (o Object) setLabel(s string) error {
 // isn't a certificate, this method fails.
 func (o Object) Certificate() (*Certificate, error) {
 	if o.Class() != ClassCertificate {
-		return nil, fmt.Errorf("object has class: %s", o.Class())
+		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassCertificate, o.Class())
 	}
-	ct := (*C.CK_CERTIFICATE_TYPE)(C.malloc(C.sizeof_CK_CERTIFICATE_TYPE))
-	defer C.free(unsafe.Pointer(ct))
-
-	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_CERTIFICATE_TYPE, C.CK_VOID_PTR(ct), C.CK_ULONG(C.sizeof_CK_CERTIFICATE_TYPE)},
+	ct, err := getAttribute[C.CK_CERTIFICATE_TYPE](&o, C.CKA_CERTIFICATE_TYPE)
+	if err != nil {
+		return nil, err
 	}
-	if err := o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting certificate type: %w", err)
-	}
-	return &Certificate{o, *ct}, nil
+	return &Certificate{o, ct}, nil
 }
 
 // PublicKey parses the underlying object as a public key. Both RSA and ECDSA
@@ -1064,95 +808,44 @@ func (o Object) Certificate() (*Certificate, error) {
 // If the object isn't a public key, this method fails.
 func (o Object) PublicKey() (crypto.PublicKey, error) {
 	if o.Class() != ClassPublicKey {
-		return nil, fmt.Errorf("object has class: %s", o.Class())
+		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPublicKey, o.Class())
 	}
 
-	kt := (*C.CK_KEY_TYPE)(C.malloc(C.sizeof_CK_KEY_TYPE))
-	defer C.free(unsafe.Pointer(kt))
-
-	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_KEY_TYPE, C.CK_VOID_PTR(kt), C.CK_ULONG(C.sizeof_CK_KEY_TYPE)},
+	kt, err := getAttribute[C.CK_KEY_TYPE](&o, C.CKA_KEY_TYPE)
+	if err != nil {
+		return nil, err
 	}
-	if err := o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting certificate type: %w", err)
-	}
-	switch *kt {
+	switch kt {
 	case C.CKK_EC:
 		return o.ecdsaPublicKey()
 	case C.CKK_RSA:
 		return o.rsaPublicKey()
 	default:
-		return nil, fmt.Errorf("unsupported key type: 0x%x", *kt)
+		return nil, fmt.Errorf("unsupported key type: 0x%08x", kt)
 	}
 }
 
 func (o Object) rsaPublicKey() (crypto.PublicKey, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398838
-	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_MODULUS, nil, 0},
-		{C.CKA_PUBLIC_EXPONENT, nil, 0},
+	attrs, err := o.getAttributesBytes([]attrType{C.CKA_MODULUS, C.CKA_PUBLIC_EXPONENT}, false)
+	if err != nil {
+		return nil, err
 	}
-	if err := o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting attributes: %w", err)
-	}
-	if attrs[0].ulValueLen == 0 {
-		return nil, fmt.Errorf("no modulus attribute returned")
-	}
-	if attrs[1].ulValueLen == 0 {
-		return nil, fmt.Errorf("no public exponent returned")
-	}
-
-	cN := (C.CK_VOID_PTR)(C.malloc(attrs[0].ulValueLen * C.sizeof_CK_BYTE))
-	defer C.free(unsafe.Pointer(cN))
-	attrs[0].pValue = cN
-
-	cE := (C.CK_VOID_PTR)(C.malloc(attrs[1].ulValueLen))
-	defer C.free(unsafe.Pointer(cE))
-	attrs[1].pValue = cE
-
-	if err := o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting attribute values: %w", err)
-	}
-
-	nBytes := C.GoBytes(unsafe.Pointer(cN), C.int(attrs[0].ulValueLen))
-	eBytes := C.GoBytes(unsafe.Pointer(cE), C.int(attrs[1].ulValueLen))
-
 	var n, e big.Int
-	n.SetBytes(nBytes)
-	e.SetBytes(eBytes)
+	n.SetBytes(attrs[0])
+	e.SetBytes(attrs[1])
 	return &rsa.PublicKey{N: &n, E: int(e.Int64())}, nil
 }
 
 func (o Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398881
-	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_EC_PARAMS, nil, 0},
-		{C.CKA_EC_POINT, nil, 0},
-	}
-	if err := o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting attributes: %w", err)
-	}
-	if attrs[0].ulValueLen == 0 {
-		return nil, fmt.Errorf("no ec parameters available")
-	}
-	if attrs[1].ulValueLen == 0 {
-		return nil, fmt.Errorf("no ec point available")
+	attrs, err := o.getAttributesBytes([]attrType{C.CKA_EC_PARAMS, C.CKA_EC_POINT}, false)
+	if err != nil {
+		return nil, err
 	}
 
-	cParam := (C.CK_VOID_PTR)(C.malloc(attrs[0].ulValueLen))
-	defer C.free(unsafe.Pointer(cParam))
-	attrs[0].pValue = cParam
-
-	cPoint := (C.CK_VOID_PTR)(C.malloc(attrs[1].ulValueLen))
-	defer C.free(unsafe.Pointer(cPoint))
-	attrs[1].pValue = cPoint
-
-	if err := o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting attribute values: %w", err)
-	}
-
-	paramBytes := C.GoBytes(unsafe.Pointer(cParam), C.int(attrs[0].ulValueLen))
-	pointBytes := C.GoBytes(unsafe.Pointer(cPoint), C.int(attrs[1].ulValueLen))
+	paramBytes := attrs[0]
+	pointBytes := attrs[1]
 
 	var curve elliptic.Curve
 	if bytes.Equal(paramBytes, p256OIDRaw) {
@@ -1162,16 +855,16 @@ func (o Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 	} else if bytes.Equal(paramBytes, p521OIDRaw) {
 		curve = elliptic.P521()
 	} else {
-		return nil, fmt.Errorf("unsupported curve")
+		return nil, fmt.Errorf("pkcs11: unsupported curve OID")
 	}
 
 	var rawPoint asn1.RawValue
 	if _, err := asn1.Unmarshal(pointBytes, &rawPoint); err != nil {
-		return nil, fmt.Errorf("decoding ec point: %v", err)
+		return nil, fmt.Errorf("pkcs11: error decoding ec point: %w", err)
 	}
 	x, y := elliptic.Unmarshal(curve, rawPoint.Bytes)
 	if x == nil {
-		return nil, fmt.Errorf("invalid point format")
+		return nil, fmt.Errorf("pkcs11: invalid point format")
 	}
 	return &ecdsa.PublicKey{
 		Curve: curve,
@@ -1189,33 +882,28 @@ func (o Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 // If the object isn't a public key, this method fails.
 func (o Object) PrivateKey(pub crypto.PublicKey) (crypto.PrivateKey, error) {
 	if o.Class() != ClassPrivateKey {
-		return nil, fmt.Errorf("object has class: %s", o.Class())
+		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPrivateKey, o.Class())
 	}
 
-	kt := (*C.CK_KEY_TYPE)(C.malloc(C.sizeof_CK_KEY_TYPE))
-	defer C.free(unsafe.Pointer(kt))
-
-	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_KEY_TYPE, C.CK_VOID_PTR(kt), C.CK_ULONG(C.sizeof_CK_KEY_TYPE)},
+	kt, err := getAttribute[C.CK_KEY_TYPE](&o, C.CKA_KEY_TYPE)
+	if err != nil {
+		return nil, fmt.Errorf("pkcs11: error getting certificate type: %w", err)
 	}
-	if err := o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting certificate type: %w", err)
-	}
-	switch *kt {
+	switch kt {
 	case C.CKK_EC:
 		p, ok := pub.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, fmt.Errorf("expected ecdsa public key, got: %T", pub)
+			return nil, fmt.Errorf("pkcs11: expected ecdsa public key, got: %T", pub)
 		}
 		return &ecdsaPrivateKey{o, p}, nil
 	case C.CKK_RSA:
 		p, ok := pub.(*rsa.PublicKey)
 		if !ok {
-			return nil, fmt.Errorf("expected rsa public key, got: %T", pub)
+			return nil, fmt.Errorf("pkcs11: expected rsa public key, got: %T", pub)
 		}
 		return &rsaPrivateKey{o, p}, nil
 	default:
-		return nil, fmt.Errorf("unsupported key type: 0x%x", *kt)
+		return nil, fmt.Errorf("pkcs11: unsupported key type: 0x%08x", kt)
 	}
 }
 
@@ -1246,41 +934,38 @@ func (r *rsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts)
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398842
 	size := opts.HashFunc().Size()
 	if size != len(digest) {
-		return nil, fmt.Errorf("input must be hashed")
+		return nil, fmt.Errorf("pkcs11: input must be hashed")
 	}
 	prefix, ok := hashPrefixes[opts.HashFunc()]
 	if !ok {
-		return nil, fmt.Errorf("unsupported hash function: %s", opts.HashFunc())
+		return nil, fmt.Errorf("pkcs11: unsupported hash function: %v", opts.HashFunc())
 	}
 
 	preAndDigest := append(prefix, digest...)
-	cBytes := toCBytes(preAndDigest)
 
-	cSig := make([]C.CK_BYTE, r.pub.Size())
-	cSigLen := C.CK_ULONG(len(cSig))
+	sig := make([]byte, r.pub.Size())
+	sigLen := C.CK_ULONG(len(sig))
 
-	m := C.CK_MECHANISM{C.CKM_RSA_PKCS, nil, 0}
-	rv := C.ck_sign_init(r.o.fl, r.o.h, &m, r.o.o)
-	if err := isOk("C_SignInit", rv); err != nil {
+	m := C.CK_MECHANISM{
+		mechanism: C.CKM_RSA_PKCS,
+	}
+	if err := r.o.ft.C_SignInit(r.o.h, &m, r.o.o); err != nil {
 		return nil, err
 	}
-	rv = C.ck_sign(r.o.fl, r.o.h, &cBytes[0], C.CK_ULONG(len(cBytes)), &cSig[0], &cSigLen)
-	if err := isOk("C_Sign", rv); err != nil {
+	if err := r.o.ft.C_Sign(r.o.h, (*C.CK_BYTE)(&preAndDigest[0]), C.CK_ULONG(len(preAndDigest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 
-	if int(cSigLen) != len(cSig) {
-		return nil, fmt.Errorf("expected signature of length %d, got %d", len(cSig), cSigLen)
+	if int(sigLen) != len(sig) {
+		return nil, fmt.Errorf("pkcs11: expected signature of length %d, got %d", len(sig), sigLen)
 	}
-	sig := toBytes(cSig)
 	return sig, nil
 }
 
 func (r *rsaPrivateKey) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398846
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398845
-	cParam := (C.CK_RSA_PKCS_PSS_PARAMS_PTR)(C.malloc(C.sizeof_CK_RSA_PKCS_PSS_PARAMS))
-	defer C.free(unsafe.Pointer(cParam))
+	var cParam C.CK_RSA_PKCS_PSS_PARAMS
 
 	switch opts.Hash {
 	case crypto.SHA256:
@@ -1293,7 +978,7 @@ func (r *rsaPrivateKey) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, er
 		cParam.hashAlg = C.CKM_SHA512
 		cParam.mgf = C.CKG_MGF1_SHA512
 	default:
-		return nil, fmt.Errorf("unsupported hash algorithm: %s", opts.Hash)
+		return nil, fmt.Errorf("pkcs11: unsupported hash algorithm: %v", opts.Hash)
 	}
 
 	switch opts.SaltLength {
@@ -1307,31 +992,30 @@ func (r *rsaPrivateKey) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, er
 		cParam.sLen = C.CK_ULONG(opts.SaltLength)
 	}
 
-	cBytes := toCBytes(digest)
+	sig := make([]byte, r.pub.Size())
+	sigLen := C.CK_ULONG(len(sig))
 
-	cSig := make([]C.CK_BYTE, r.pub.Size())
-	cSigLen := C.CK_ULONG(len(cSig))
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(&cParam)
 
 	m := C.CK_MECHANISM{
 		mechanism:      C.CKM_RSA_PKCS_PSS,
-		pParameter:     C.CK_VOID_PTR(cParam),
-		ulParameterLen: C.CK_ULONG(C.sizeof_CK_RSA_PKCS_PSS_PARAMS),
+		pParameter:     C.CK_VOID_PTR(&cParam),
+		ulParameterLen: C.CK_ULONG(unsafe.Sizeof(cParam)),
 	}
 
-	rv := C.ck_sign_init(r.o.fl, r.o.h, &m, r.o.o)
-	if err := isOk("C_SignInit", rv); err != nil {
+	if err := r.o.ft.C_SignInit(r.o.h, &m, r.o.o); err != nil {
 		return nil, err
 	}
-	rv = C.ck_sign(r.o.fl, r.o.h, &cBytes[0], C.CK_ULONG(len(cBytes)), &cSig[0], &cSigLen)
-	if err := isOk("C_Sign", rv); err != nil {
+	if err := r.o.ft.C_Sign(r.o.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 
-	if int(cSigLen) != len(cSig) {
-		return nil, fmt.Errorf("expected signature of length %d, got %d", len(cSig), cSigLen)
+	if int(sigLen) != len(sig) {
+		return nil, fmt.Errorf("pkcs11: expected signature of length %d, got %d", len(sig), sigLen)
 	}
-	sig := toBytes(cSig)
-	return sig, nil
+	return []byte(sig), nil
 }
 
 type ecdsaPrivateKey struct {
@@ -1349,27 +1033,24 @@ type ecdsaSignature struct {
 
 func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398884
-	m := C.CK_MECHANISM{C.CKM_ECDSA, nil, 0}
-	rv := C.ck_sign_init(e.o.fl, e.o.h, &m, e.o.o)
-	if err := isOk("C_SignInit", rv); err != nil {
+	m := C.CK_MECHANISM{
+		mechanism: C.CKM_ECDSA,
+	}
+	if err := e.o.ft.C_SignInit(e.o.h, &m, e.o.o); err != nil {
 		return nil, err
 	}
 
 	byteLen := (e.pub.Curve.Params().BitSize + 7) / 8
-	cSig := make([]C.CK_BYTE, byteLen*2)
-	cSigLen := C.CK_ULONG(len(cSig))
+	sig := make([]byte, byteLen*2)
+	sigLen := C.CK_ULONG(len(sig))
 
-	cBytes := toCBytes(digest)
-
-	rv = C.ck_sign(e.o.fl, e.o.h, &cBytes[0], C.CK_ULONG(len(digest)), &cSig[0], &cSigLen)
-	if err := isOk("C_Sign", rv); err != nil {
+	if err := e.o.ft.C_Sign(e.o.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 
-	if int(cSigLen) != len(cSig) {
-		return nil, fmt.Errorf("expected signature of length %d, got %d", len(cSig), cSigLen)
+	if int(sigLen) != len(sig) {
+		return nil, fmt.Errorf("pkcs11: expected signature of length %d, got %d", len(sig), sigLen)
 	}
-	sig := toBytes(cSig)
 
 	var (
 		r = big.NewInt(0)
@@ -1427,33 +1108,16 @@ func (c *Certificate) Type() CertificateType {
 func (c *Certificate) X509() (*x509.Certificate, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
 	if c.t != C.CKC_X_509 {
-		return nil, fmt.Errorf("invalid certificate type")
+		return nil, fmt.Errorf("pkcs11: invalid certificate type: 0x%08x", c.t)
 	}
 
-	// TODO(ericchiang): Do we want to support CKA_URL?
-	var n C.CK_ULONG
-	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_VALUE, nil, n},
-	}
-	if err := c.o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting certificate type: %w", err)
-	}
-	n = attrs[0].ulValueLen
-	if n == 0 {
-		return nil, fmt.Errorf("certificate value not present")
-	}
-	cRaw := (C.CK_VOID_PTR)(C.malloc(C.ulong(n)))
-	defer C.free(unsafe.Pointer(cRaw))
-
-	attrs[0].pValue = cRaw
-	if err := c.o.getAttribute(attrs); err != nil {
-		return nil, fmt.Errorf("getting certificate type: %w", err)
-	}
-
-	raw := C.GoBytes(unsafe.Pointer(cRaw), C.int(n))
-	cert, err := x509.ParseCertificate(raw)
+	raw, err := c.o.getAttributesBytes([]attrType{C.CKA_VALUE}, false)
 	if err != nil {
-		return nil, fmt.Errorf("parsing certificate: %v", err)
+		return nil, err
+	}
+	cert, err := x509.ParseCertificate(raw[0])
+	if err != nil {
+		return nil, fmt.Errorf("pkcs11: error parsing certificate: %w", err)
 	}
 	return cert, nil
 }
@@ -1500,59 +1164,58 @@ func (s *Slot) generateRSA(o keyOptions) (crypto.PrivateKey, error) {
 		privH C.CK_OBJECT_HANDLE
 	)
 
-	cTrue := (C.CK_VOID_PTR)(C.malloc(C.sizeof_CK_BBOOL))
-	cFalse := (C.CK_VOID_PTR)(C.malloc(C.sizeof_CK_BBOOL))
-	defer C.free(unsafe.Pointer(cTrue))
-	defer C.free(unsafe.Pointer(cFalse))
-	*((*C.CK_BBOOL)(cTrue)) = C.CK_TRUE
-	*((*C.CK_BBOOL)(cFalse)) = C.CK_FALSE
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
 
-	cModBits := (C.CK_VOID_PTR)(C.malloc(C.sizeof_CK_ULONG))
-	defer C.free(unsafe.Pointer(cModBits))
+	cTrue := C.CK_BBOOL(C.CK_TRUE)
+	cFalse := C.CK_BBOOL(C.CK_FALSE)
+	cModBits := C.CK_ULONG(o.RSABits)
 
-	*((*C.CK_ULONG)(cModBits)) = C.CK_ULONG(o.RSABits)
+	pinner.Pin(&cTrue)
+	pinner.Pin(&cFalse)
+	pinner.Pin(&cModBits)
 
 	privTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_PRIVATE, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
-		{C.CKA_SENSITIVE, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
-		{C.CKA_SIGN, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
+		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
 	}
 
 	if o.LabelPrivate != "" {
-		cs, free := ckCString(o.LabelPrivate)
-		defer free()
+		cs := []byte(o.LabelPrivate)
+		pinner.Pin(&cs[0])
 
 		privTmpl = append(privTmpl, C.CK_ATTRIBUTE{
 			C.CKA_LABEL,
-			C.CK_VOID_PTR(cs),
+			C.CK_VOID_PTR(&cs[0]),
 			C.CK_ULONG(len(o.LabelPrivate)),
 		})
 	}
 
 	pubTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_MODULUS_BITS, cModBits, C.CK_ULONG(C.sizeof_CK_ULONG)},
-		{C.CKA_VERIFY, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
+		{C.CKA_MODULUS_BITS, C.CK_VOID_PTR(&cModBits), C.CK_ULONG(unsafe.Sizeof(cModBits))},
+		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
 	}
 
 	if o.LabelPublic != "" {
-		cs, free := ckCString(o.LabelPublic)
-		defer free()
+		cs := []byte(o.LabelPublic)
+		pinner.Pin(&cs[0])
 
 		pubTmpl = append(pubTmpl, C.CK_ATTRIBUTE{
 			C.CKA_LABEL,
-			C.CK_VOID_PTR(cs),
+			C.CK_VOID_PTR(&cs[0]),
 			C.CK_ULONG(len(o.LabelPublic)),
 		})
 	}
 
-	rv := C.ck_generate_key_pair(
-		s.fl, s.h, &mechanism,
+	err := s.ft.C_GenerateKeyPair(
+		s.h, &mechanism,
 		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
 		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
 		&pubH, &privH,
 	)
 
-	if err := isOk("C_GenerateKeyPair", rv); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
@@ -1602,6 +1265,9 @@ func (s *Slot) generateECDSA(o keyOptions) (crypto.PrivateKey, error) {
 		return nil, fmt.Errorf("no curve provided")
 	}
 
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
 	var oid []byte
 	switch o.ECDSACurve.Params().Name {
 	case "P-256":
@@ -1613,59 +1279,53 @@ func (s *Slot) generateECDSA(o keyOptions) (crypto.PrivateKey, error) {
 	default:
 		return nil, fmt.Errorf("unsupported ECDSA curve")
 	}
+	pinner.Pin(&oid[0])
 
-	// When passing a struct or array to C, that value can't refer to Go
-	// memory. Allocate all attribute values in C rather than in Go.
-	cOID := (C.CK_VOID_PTR)(C.CBytes(oid))
-	defer C.free(unsafe.Pointer(cOID))
-
-	cTrue := (C.CK_VOID_PTR)(C.malloc(C.sizeof_CK_BBOOL))
-	cFalse := (C.CK_VOID_PTR)(C.malloc(C.sizeof_CK_BBOOL))
-	defer C.free(unsafe.Pointer(cTrue))
-	defer C.free(unsafe.Pointer(cFalse))
-	*((*C.CK_BBOOL)(cTrue)) = C.CK_TRUE
-	*((*C.CK_BBOOL)(cFalse)) = C.CK_FALSE
+	cTrue := C.CK_BBOOL(C.CK_TRUE)
+	cFalse := C.CK_BBOOL(C.CK_FALSE)
+	pinner.Pin(&cTrue)
+	pinner.Pin(&cFalse)
 
 	privTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_PRIVATE, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
-		{C.CKA_SENSITIVE, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
-		{C.CKA_SIGN, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
+		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
 	}
 
 	if o.LabelPrivate != "" {
-		cs, free := ckCString(o.LabelPrivate)
-		defer free()
+		cs := []byte(o.LabelPrivate)
+		pinner.Pin(&cs[0])
 
 		privTmpl = append(privTmpl, C.CK_ATTRIBUTE{
 			C.CKA_LABEL,
-			C.CK_VOID_PTR(cs),
+			C.CK_VOID_PTR(&cs[0]),
 			C.CK_ULONG(len(o.LabelPrivate)),
 		})
 	}
 
 	pubTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_EC_PARAMS, cOID, C.CK_ULONG(len(oid))},
-		{C.CKA_VERIFY, cTrue, C.CK_ULONG(C.sizeof_CK_BBOOL)},
+		{C.CKA_EC_PARAMS, C.CK_VOID_PTR(&oid[0]), C.CK_ULONG(len(oid))},
+		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
 	}
 	if o.LabelPublic != "" {
-		cs, free := ckCString(o.LabelPublic)
-		defer free()
+		cs := []byte(o.LabelPublic)
+		pinner.Pin(&cs[0])
 
 		pubTmpl = append(pubTmpl, C.CK_ATTRIBUTE{
 			C.CKA_LABEL,
-			C.CK_VOID_PTR(cs),
+			C.CK_VOID_PTR(&cs[0]),
 			C.CK_ULONG(len(o.LabelPublic)),
 		})
 	}
 
-	rv := C.ck_generate_key_pair(
-		s.fl, s.h, &mechanism,
+	err := s.ft.C_GenerateKeyPair(
+		s.h, &mechanism,
 		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
 		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
 		&pubH, &privH,
 	)
 
-	if err := isOk("C_GenerateKeyPair", rv); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
@@ -1692,8 +1352,7 @@ func (r *rsaPrivateKey) Decrypt(_ io.Reader, encryptedData []byte, opts crypto.D
 	var m C.CK_MECHANISM
 
 	if o, ok := opts.(*rsa.OAEPOptions); ok {
-		cParam := (C.CK_RSA_PKCS_OAEP_PARAMS_PTR)(C.malloc(C.sizeof_CK_RSA_PKCS_OAEP_PARAMS))
-		defer C.free(unsafe.Pointer(cParam))
+		var cParam C.CK_RSA_PKCS_OAEP_PARAMS
 
 		switch o.Hash {
 		case crypto.SHA256:
@@ -1709,58 +1368,45 @@ func (r *rsaPrivateKey) Decrypt(_ io.Reader, encryptedData []byte, opts crypto.D
 			cParam.hashAlg = C.CKM_SHA_1
 			cParam.mgf = C.CKG_MGF1_SHA1
 		default:
-			return nil, fmt.Errorf("decryptOAEP error, unsupported hash algorithm: %s", o.Hash)
+			return nil, fmt.Errorf("pkcs11: unsupported hash algorithm: %v", o.Hash)
 		}
 
 		cParam.source = C.CKZ_DATA_SPECIFIED
 		cParam.pSourceData = nil
 		cParam.ulSourceDataLen = 0
 
+		var pinner runtime.Pinner
+		defer pinner.Unpin()
+		pinner.Pin(&cParam)
+
 		m = C.CK_MECHANISM{
 			mechanism:      C.CKM_RSA_PKCS_OAEP,
-			pParameter:     C.CK_VOID_PTR(cParam),
-			ulParameterLen: C.CK_ULONG(C.sizeof_CK_RSA_PKCS_OAEP_PARAMS),
+			pParameter:     C.CK_VOID_PTR(&cParam),
+			ulParameterLen: C.CK_ULONG(unsafe.Sizeof(cParam)),
 		}
 	} else {
 		m = C.CK_MECHANISM{C.CKM_RSA_PKCS, nil, 0}
 	}
 
-	cEncDataBytes := toCBytes(encryptedData)
-
-	rv := C.ck_decrypt_init(r.o.fl, r.o.h, &m, r.o.o)
-	if err := isOk("C_DecryptInit", rv); err != nil {
+	if err := r.o.ft.C_DecryptInit(r.o.h, &m, r.o.o); err != nil {
 		return nil, err
 	}
 
 	var cDecryptedLen C.CK_ULONG
 
 	// First call is used to determine length necessary to hold decrypted data (PKCS #11 5.2)
-	rv = C.ck_decrypt(r.o.fl, r.o.h, &cEncDataBytes[0], C.CK_ULONG(len(cEncDataBytes)), nil, &cDecryptedLen)
-	if err := isOk("C_Decrypt", rv); err != nil {
+	if err := r.o.ft.C_Decrypt(r.o.h, (*C.CK_BYTE)(&encryptedData[0]), C.CK_ULONG(len(encryptedData)), nil, &cDecryptedLen); err != nil {
 		return nil, err
 	}
 
-	cDecrypted := make([]C.CK_BYTE, cDecryptedLen)
+	decrypted := make([]byte, cDecryptedLen)
 
-	rv = C.ck_decrypt(r.o.fl, r.o.h, &cEncDataBytes[0], C.CK_ULONG(len(cEncDataBytes)), &cDecrypted[0], &cDecryptedLen)
-	if err := isOk("C_Decrypt", rv); err != nil {
+	if err := r.o.ft.C_Decrypt(r.o.h, (*C.CK_BYTE)(&encryptedData[0]), C.CK_ULONG(len(encryptedData)), (*C.CK_BYTE)(&decrypted[0]), &cDecryptedLen); err != nil {
 		return nil, err
 	}
-
-	decrypted := toBytes(cDecrypted)
 
 	// Removes null padding (PKCS#11 5.2): http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959738
-	decrypted = bytes.Trim(decrypted, "\x00")
-
-	return decrypted, nil
-}
-
-func toBytes(data []C.CK_BYTE) []byte {
-	goBytes := make([]byte, len(data))
-	for i, b := range data {
-		goBytes[i] = byte(b)
-	}
-	return goBytes
+	return bytes.Trim(decrypted, "\x00"), nil
 }
 
 func toCBytes(data []byte) []C.CK_BYTE {

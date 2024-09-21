@@ -1,4 +1,5 @@
 // Copyright 2021 Google LLC
+// Copyright 2024 ECAD Labs Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -40,8 +42,9 @@ var requireSoftHSMv2 = flag.Bool("require-libsofthsm2", false,
 	"When set, tests will fail if libsofthsm2 is not available.")
 
 const (
-	libSoftHSMPath = "/usr/lib/softhsm/libsofthsm2.so"
-	syslogPath     = "/var/log/syslog"
+	libSoftHSMPathUnix = "/usr/lib/softhsm/libsofthsm2.so"
+	libSoftHSMPathMac  = "/opt/homebrew/lib/softhsm/libsofthsm2.so"
+	syslogPath         = "/var/log/syslog"
 
 	testAdminPIN = "12345"
 	testPIN      = "1234"
@@ -49,7 +52,14 @@ const (
 )
 
 func newTestModule(t *testing.T) *Module {
-	if _, err := os.Stat(libSoftHSMPath); err != nil {
+	var path string
+	if runtime.GOOS == "darwin" {
+		path = libSoftHSMPathMac
+	} else {
+		path = libSoftHSMPathUnix
+	}
+
+	if _, err := os.Stat(path); err != nil {
 		if *requireSoftHSMv2 {
 			t.Fatalf("libsofthsm2 not installed")
 		}
@@ -57,38 +67,40 @@ func newTestModule(t *testing.T) *Module {
 		t.Skipf("libsofthsm2 not installed, skipping testing")
 	}
 
-	// Open syslog file and seek to end before the tests starts. Anything read
-	// after this will have been logged during the test.
-	f, err := os.Open(syslogPath)
-	if err != nil {
-		t.Fatalf("opening syslog file: %v", err)
-	}
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		f.Close()
-		t.Fatalf("seeking to end of file: %v", err)
-	}
-
-	t.Cleanup(func() {
-		defer f.Close()
-		if !t.Failed() {
-			return
-		}
-
-		data, err := io.ReadAll(f)
+	if runtime.GOOS != "darwin" {
+		// Open syslog file and seek to end before the tests starts. Anything read
+		// after this will have been logged during the test.
+		f, err := os.Open(syslogPath)
 		if err != nil {
-			t.Errorf("reading syslog file: %v", err)
+			t.Fatalf("opening syslog file: %v", err)
 		}
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			// softhsm tags the syslog files using the binary name, not "softhsm"
-			// or a related string. Logs were tagged with "pkcs11.test".
-			if !strings.Contains(line, "pkcs11") {
-				continue
+		if _, err := f.Seek(0, io.SeekEnd); err != nil {
+			f.Close()
+			t.Fatalf("seeking to end of file: %v", err)
+		}
+
+		t.Cleanup(func() {
+			defer f.Close()
+			if !t.Failed() {
+				return
 			}
 
-			t.Logf("%s", line)
-		}
-	})
+			data, err := io.ReadAll(f)
+			if err != nil {
+				t.Errorf("reading syslog file: %v", err)
+			}
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				// softhsm tags the syslog files using the binary name, not "softhsm"
+				// or a related string. Logs were tagged with "pkcs11.test".
+				if !strings.Contains(line, "pkcs11") {
+					continue
+				}
+
+				t.Logf("%s", line)
+			}
+		})
+	}
 
 	// See softhsm2.conf(5) for config details
 	configPath := filepath.Join(t.TempDir(), "softhsm.conf")
@@ -105,9 +117,9 @@ directories.tokendir = %s
 	}
 	t.Setenv("SOFTHSM2_CONF", configPath)
 
-	m, err := Open(libSoftHSMPath)
+	m, err := Open(path)
 	if err != nil {
-		t.Fatalf("Open(%s): %v", libSoftHSMPath, err)
+		t.Fatalf("Open(%s): %v", path, err)
 	}
 	t.Cleanup(func() {
 		if err := m.Close(); err != nil {
@@ -119,16 +131,16 @@ directories.tokendir = %s
 
 func newTestSlot(t *testing.T) *Slot {
 	m := newTestModule(t)
-	opts := slotOptions{
-		AdminPIN: testAdminPIN,
-		PIN:      testPIN,
-		Label:    testLabel,
+	opts := createSlotOptions{
+		SecurityOfficerPIN: testAdminPIN,
+		UserPIN:            testPIN,
+		Label:              testLabel,
 	}
 	if err := m.createSlot(0, opts); err != nil {
 		t.Fatalf("createSlot(0, %v): %v", opts, err)
 	}
 
-	s, err := m.Slot(0, Options{PIN: testPIN, ReadWrite: true})
+	s, err := m.Slot(0, OptUserPIN(testPIN), OptReadWrite)
 	if err != nil {
 		t.Fatalf("Slot(0): %v", err)
 	}
@@ -146,10 +158,10 @@ func TestNewModule(t *testing.T) {
 
 func TestSlotInit(t *testing.T) {
 	m := newTestModule(t)
-	opts := slotOptions{
-		AdminPIN: testAdminPIN,
-		PIN:      testPIN,
-		Label:    testLabel,
+	opts := createSlotOptions{
+		SecurityOfficerPIN: testAdminPIN,
+		UserPIN:            testPIN,
+		Label:              testLabel,
 	}
 	if err := m.createSlot(0, opts); err != nil {
 		t.Fatalf("createSlot(0, %v): %v", opts, err)
@@ -182,10 +194,10 @@ func TestInfo(t *testing.T) {
 
 func TestSlotInfo(t *testing.T) {
 	m := newTestModule(t)
-	opts := slotOptions{
-		AdminPIN: testAdminPIN,
-		PIN:      testPIN,
-		Label:    testLabel,
+	opts := createSlotOptions{
+		SecurityOfficerPIN: testAdminPIN,
+		UserPIN:            testPIN,
+		Label:              testLabel,
 	}
 	if err := m.createSlot(0, opts); err != nil {
 		t.Fatalf("createSlot(0, %v): %v", opts, err)
@@ -204,26 +216,26 @@ func TestSlotInfo(t *testing.T) {
 func TestSlot(t *testing.T) {
 	tests := []struct {
 		name string
-		opts Options
+		opts []SlotOption
 	}{
-		{"Default", Options{}},
-		{"RWSession", Options{ReadWrite: true}},
-		{"PIN", Options{PIN: testPIN}},
-		{"AdminPIN", Options{ReadWrite: true, AdminPIN: testAdminPIN}},
+		{"Default", []SlotOption{}},
+		{"RWSession", []SlotOption{OptReadWrite}},
+		{"PIN", []SlotOption{OptUserPIN(testPIN)}},
+		{"AdminPIN", []SlotOption{OptReadWrite, OptSecurityOfficerPIN(testAdminPIN)}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			m := newTestModule(t)
-			opts := slotOptions{
-				AdminPIN: testAdminPIN,
-				PIN:      testPIN,
-				Label:    testLabel,
+			opts := createSlotOptions{
+				SecurityOfficerPIN: testAdminPIN,
+				UserPIN:            testPIN,
+				Label:              testLabel,
 			}
 			if err := m.createSlot(0, opts); err != nil {
 				t.Fatalf("createSlot(0, %v): %v", opts, err)
 			}
 
-			s, err := m.Slot(0, test.opts)
+			s, err := m.Slot(0, test.opts...)
 			if err != nil {
 				t.Fatalf("Slot(0): %v", err)
 			}
@@ -274,7 +286,7 @@ func TestECDSAPublicKey(t *testing.T) {
 			if _, err := s.generate(o); err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			objs, err := s.Objects(Filter{Class: ClassPublicKey})
+			objs, err := s.Objects(FilterClass(ClassPublicKey))
 			if err != nil {
 				t.Fatalf("Objects(): %v", err)
 			}
@@ -310,7 +322,7 @@ func TestRSAPublicKey(t *testing.T) {
 			if _, err := s.generate(o); err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			objs, err := s.Objects(Filter{Class: ClassPublicKey})
+			objs, err := s.Objects(FilterClass(ClassPublicKey))
 			if err != nil {
 				t.Fatalf("Objects(): %v", err)
 			}
@@ -466,13 +478,13 @@ func TestRSAPrivateKeyPSS(t *testing.T) {
 func TestObjects(t *testing.T) {
 	tests := []struct {
 		name string
-		opts Filter
+		opts []Filter
 		want []Class
 	}{
-		{"AllObjects", Filter{}, []Class{ClassPublicKey, ClassPrivateKey}},
-		{"PrivateKey", Filter{Class: ClassPrivateKey}, []Class{ClassPrivateKey}},
-		{"PublicKey", Filter{Class: ClassPublicKey}, []Class{ClassPublicKey}},
-		{"ByLabel", Filter{Label: "privatekey"}, []Class{ClassPrivateKey}},
+		{"AllObjects", []Filter{}, []Class{ClassPublicKey, ClassPrivateKey}},
+		{"PrivateKey", []Filter{FilterClass(ClassPrivateKey)}, []Class{ClassPrivateKey}},
+		{"PublicKey", []Filter{FilterClass(ClassPublicKey)}, []Class{ClassPublicKey}},
+		{"ByLabel", []Filter{FilterLabel("privatekey")}, []Class{ClassPrivateKey}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -486,7 +498,7 @@ func TestObjects(t *testing.T) {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
 
-			objs, err := s.Objects(test.opts)
+			objs, err := s.Objects(test.opts...)
 			if err != nil {
 				t.Fatalf("Slot(0).Objects(): %v", err)
 			}
