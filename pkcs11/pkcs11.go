@@ -80,7 +80,7 @@ func (e *Error) Error() string {
 	if !ok {
 		code = fmt.Sprintf("0x%x", e.code)
 	}
-	return fmt.Sprintf("pkcs11: %s() %s", e.fnName, code)
+	return fmt.Sprintf("pkcs11: %s(): %s", e.fnName, code)
 }
 
 var ckRVString = map[C.CK_RV]string{
@@ -534,7 +534,7 @@ func (c Class) String() string {
 	if s, ok := classString[c]; ok {
 		return s
 	}
-	return fmt.Sprintf("Class(0x%08x)", int(c))
+	return fmt.Sprintf("Class(0x%08x)", uint(c))
 }
 
 func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (Object, error) {
@@ -799,7 +799,7 @@ func (o Object) Certificate() (*Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Certificate{o, ct}, nil
+	return &Certificate{o, CertificateType(ct)}, nil
 }
 
 // PublicKey parses the underlying object as a public key. Both RSA and ECDSA
@@ -1066,13 +1066,30 @@ func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 // This can be X.509, WTLS, GPG, etc.
 //
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959709
-type CertificateType int
+type CertificateType uint
 
 // Certificate types supported by this package.
 const (
-	CertificateX509 CertificateType = iota + 1
-	CertificateUnknown
+	CertificateX509          = CertificateType(C.CKC_X_509)
+	CertificateX509AttrCert  = CertificateType(C.CKC_X_509_ATTR_CERT)
+	CertificateWTLS          = CertificateType(C.CKC_WTLS)
+	CertificateVendorDefined = CertificateType(C.CKC_VENDOR_DEFINED)
 )
+
+func (t CertificateType) String() string {
+	switch t {
+	case CertificateX509:
+		return "CKC_X_509"
+	case CertificateX509AttrCert:
+		return "CKC_X_509_ATTR_CERT"
+	case CertificateWTLS:
+		return "CKC_WTLS"
+	case CertificateVendorDefined:
+		return "CKC_VENDOR_DEFINED"
+	default:
+		return fmt.Sprintf("CertificateType(0x%08x)", uint(t))
+	}
+}
 
 // Certificate holds a certificate object. Because certificates object can hold
 // various kinds of certificates, callers should check the type before calling
@@ -1088,17 +1105,12 @@ const (
 //	x509Cert, err := cert.X509()
 type Certificate struct {
 	o Object
-	t C.CK_CERTIFICATE_TYPE
+	t CertificateType
 }
 
 // Type returns the format of the underlying certificate.
 func (c *Certificate) Type() CertificateType {
-	switch c.t {
-	case C.CKC_X_509:
-		return CertificateX509
-	default:
-		return CertificateUnknown
-	}
+	return c.t
 }
 
 // X509 parses the underlying certificate as an X.509 certificate.
