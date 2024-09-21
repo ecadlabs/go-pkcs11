@@ -47,13 +47,15 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/asn1"
 	"fmt"
 	"io"
 	"math/big"
 	"runtime"
 	"strings"
 	"unsafe"
+
+	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/crypto/cryptobyte/asn1"
 )
 
 // ckStringPadded copies a string into b, padded with ' '. If the string is larger
@@ -705,13 +707,13 @@ type Object struct {
 
 // Class returns the type of the object stored. For example, certificate, public
 // key, or private key.
-func (o Object) Class() Class {
-	return Class(int(o.c))
+func (o *Object) Class() Class {
+	return Class(o.c)
 }
 
 type attrType C.CK_ATTRIBUTE_TYPE
 
-func (o Object) getAttributesBytes(types []attrType, allowMissing bool) ([][]byte, error) {
+func (o *Object) getAttributesBytes(types []attrType, allowMissing bool) ([][]byte, error) {
 	attrs := make([]C.CK_ATTRIBUTE, len(types))
 	for i, t := range types {
 		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(t)
@@ -763,13 +765,13 @@ func getAttribute[T any](o *Object, typ C.CK_ATTRIBUTE_TYPE) (T, error) {
 	return value, nil
 }
 
-func (o Object) setAttribute(attrs []C.CK_ATTRIBUTE) error {
+func (o *Object) setAttribute(attrs []C.CK_ATTRIBUTE) error {
 	return o.ft.C_SetAttributeValue(o.h, o.o, &attrs[0], C.CK_ULONG(len(attrs)))
 }
 
 // Label returns a string value attached to an object, which can be used to
 // identify or group sets of keys and certificates.
-func (o Object) Label() (string, error) {
+func (o *Object) Label() (string, error) {
 	v, err := o.getAttributesBytes([]attrType{C.CKA_LABEL}, false)
 	if err != nil {
 		return "", err
@@ -778,7 +780,7 @@ func (o Object) Label() (string, error) {
 }
 
 // setLabel sets the label of the object overwriting any previous value.
-func (o Object) setLabel(s string) error {
+func (o *Object) setLabel(s string) error {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 
@@ -791,27 +793,27 @@ func (o Object) setLabel(s string) error {
 
 // Certificate parses the underlying object as a certificate. If the object
 // isn't a certificate, this method fails.
-func (o Object) Certificate() (*Certificate, error) {
+func (o *Object) Certificate() (*Certificate, error) {
 	if o.Class() != ClassCertificate {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassCertificate, o.Class())
 	}
-	ct, err := getAttribute[C.CK_CERTIFICATE_TYPE](&o, C.CKA_CERTIFICATE_TYPE)
+	ct, err := getAttribute[C.CK_CERTIFICATE_TYPE](o, C.CKA_CERTIFICATE_TYPE)
 	if err != nil {
 		return nil, err
 	}
-	return &Certificate{o, CertificateType(ct)}, nil
+	return &Certificate{o, ct}, nil
 }
 
 // PublicKey parses the underlying object as a public key. Both RSA and ECDSA
 // keys are supported.
 //
 // If the object isn't a public key, this method fails.
-func (o Object) PublicKey() (crypto.PublicKey, error) {
+func (o *Object) PublicKey() (crypto.PublicKey, error) {
 	if o.Class() != ClassPublicKey {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPublicKey, o.Class())
 	}
 
-	kt, err := getAttribute[C.CK_KEY_TYPE](&o, C.CKA_KEY_TYPE)
+	kt, err := getAttribute[C.CK_KEY_TYPE](o, C.CKA_KEY_TYPE)
 	if err != nil {
 		return nil, err
 	}
@@ -825,7 +827,7 @@ func (o Object) PublicKey() (crypto.PublicKey, error) {
 	}
 }
 
-func (o Object) rsaPublicKey() (crypto.PublicKey, error) {
+func (o *Object) rsaPublicKey() (crypto.PublicKey, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398838
 	attrs, err := o.getAttributesBytes([]attrType{C.CKA_MODULUS, C.CKA_PUBLIC_EXPONENT}, false)
 	if err != nil {
@@ -837,7 +839,7 @@ func (o Object) rsaPublicKey() (crypto.PublicKey, error) {
 	return &rsa.PublicKey{N: &n, E: int(e.Int64())}, nil
 }
 
-func (o Object) ecdsaPublicKey() (crypto.PublicKey, error) {
+func (o *Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398881
 	attrs, err := o.getAttributesBytes([]attrType{C.CKA_EC_PARAMS, C.CKA_EC_POINT}, false)
 	if err != nil {
@@ -858,11 +860,12 @@ func (o Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 		return nil, fmt.Errorf("pkcs11: unsupported curve OID")
 	}
 
-	var rawPoint asn1.RawValue
-	if _, err := asn1.Unmarshal(pointBytes, &rawPoint); err != nil {
+	ptObj := cryptobyte.String(pointBytes)
+	var pt cryptobyte.String
+	if !ptObj.ReadASN1(&pt, asn1.OCTET_STRING) {
 		return nil, fmt.Errorf("pkcs11: error decoding ec point: %w", err)
 	}
-	x, y := elliptic.Unmarshal(curve, rawPoint.Bytes)
+	x, y := elliptic.Unmarshal(curve, pt)
 	if x == nil {
 		return nil, fmt.Errorf("pkcs11: invalid point format")
 	}
@@ -880,12 +883,12 @@ func (o Object) ecdsaPublicKey() (crypto.PublicKey, error) {
 // depending on the supported mechanisms.
 //
 // If the object isn't a public key, this method fails.
-func (o Object) PrivateKey(pub crypto.PublicKey) (crypto.PrivateKey, error) {
+func (o *Object) PrivateKey(pub crypto.PublicKey) (crypto.PrivateKey, error) {
 	if o.Class() != ClassPrivateKey {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPrivateKey, o.Class())
 	}
 
-	kt, err := getAttribute[C.CK_KEY_TYPE](&o, C.CKA_KEY_TYPE)
+	kt, err := getAttribute[C.CK_KEY_TYPE](o, C.CKA_KEY_TYPE)
 	if err != nil {
 		return nil, fmt.Errorf("pkcs11: error getting certificate type: %w", err)
 	}
@@ -918,7 +921,7 @@ var hashPrefixes = map[crypto.Hash][]byte{
 }
 
 type rsaPrivateKey struct {
-	o   Object
+	o   *Object
 	pub *rsa.PublicKey
 }
 
@@ -1019,16 +1022,12 @@ func (r *rsaPrivateKey) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, er
 }
 
 type ecdsaPrivateKey struct {
-	o   Object
+	o   *Object
 	pub *ecdsa.PublicKey
 }
 
 func (e *ecdsaPrivateKey) Public() crypto.PublicKey {
 	return e.pub
-}
-
-type ecdsaSignature struct {
-	R, S *big.Int
 }
 
 func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
@@ -1059,7 +1058,13 @@ func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 	r.SetBytes(sig[:len(sig)/2])
 	s.SetBytes(sig[len(sig)/2:])
 
-	return asn1.Marshal(ecdsaSignature{r, s})
+	var b cryptobyte.Builder
+	b.AddASN1(asn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		b.AddASN1BigInt(r)
+		b.AddASN1BigInt(s)
+	})
+
+	return b.Bytes()
 }
 
 // CertificateType determines the kind of certificate a certificate object holds.
@@ -1104,13 +1109,13 @@ func (t CertificateType) String() string {
 //	}
 //	x509Cert, err := cert.X509()
 type Certificate struct {
-	o Object
-	t CertificateType
+	o *Object
+	t C.CK_CERTIFICATE_TYPE
 }
 
 // Type returns the format of the underlying certificate.
 func (c *Certificate) Type() CertificateType {
-	return c.t
+	return CertificateType(c.t)
 }
 
 // X509 parses the underlying certificate as an X.509 certificate.
@@ -1120,7 +1125,7 @@ func (c *Certificate) Type() CertificateType {
 func (c *Certificate) X509() (*x509.Certificate, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
 	if c.t != C.CKC_X_509 {
-		return nil, fmt.Errorf("pkcs11: invalid certificate type: 0x%08x", c.t)
+		return nil, fmt.Errorf("pkcs11: invalid certificate type: %v", CertificateType(c.t))
 	}
 
 	raw, err := c.o.getAttributesBytes([]attrType{C.CKA_VALUE}, false)
