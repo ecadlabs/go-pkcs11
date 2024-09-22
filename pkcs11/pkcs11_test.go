@@ -36,6 +36,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 var requireSoftHSMv2 = flag.Bool("require-libsofthsm2", false,
@@ -353,6 +355,7 @@ func TestECDSAPrivateKey(t *testing.T) {
 		{"P256", elliptic.P256()},
 		{"P384", elliptic.P384()},
 		{"P521", elliptic.P521()},
+		{"S256", secp256k1.S256()},
 	}
 
 	for _, test := range tests {
