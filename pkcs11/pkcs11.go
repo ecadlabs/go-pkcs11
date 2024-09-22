@@ -56,6 +56,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/cryptobyte/asn1"
 )
@@ -1033,9 +1034,11 @@ func (o *Object) rsaPrivateKey() (*rsaPrivateKey, error) {
 }
 
 var (
+	oidCurveP224 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 33}
 	oidCurveP256 = asn1enc.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
 	oidCurveP384 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 34}
 	oidCurveP521 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 35}
+	oidCurveS256 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 10} // http://www.secg.org/sec2-v2.pdf
 )
 
 func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
@@ -1053,13 +1056,18 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 	}
 
 	var curve elliptic.Curve
-	if oid.Equal(oidCurveP256) {
+	switch {
+	case oid.Equal(oidCurveP224):
+		curve = elliptic.P224()
+	case oid.Equal(oidCurveP256):
 		curve = elliptic.P256()
-	} else if oid.Equal(oidCurveP384) {
+	case oid.Equal(oidCurveP384):
 		curve = elliptic.P384()
-	} else if oid.Equal(oidCurveP521) {
+	case oid.Equal(oidCurveP521):
 		curve = elliptic.P521()
-	} else {
+	case oid.Equal(oidCurveS256):
+		curve = secp256k1.S256()
+	default:
 		return nil, errors.New("pkcs11: unsupported curve OID")
 	}
 
@@ -1543,13 +1551,18 @@ func (s *Slot) generateECDSA(o keyOptions) (PrivateKey, error) {
 	defer pinner.Unpin()
 
 	var oid asn1enc.ObjectIdentifier
-	switch o.ECDSACurve.Params().Name {
-	case "P-256":
+	curveName := o.ECDSACurve.Params().Name
+	switch {
+	case o.ECDSACurve == elliptic.P224() || curveName == "P-224":
+		oid = oidCurveP224
+	case o.ECDSACurve == elliptic.P256() || curveName == "P-256":
 		oid = oidCurveP256
-	case "P-384":
+	case o.ECDSACurve == elliptic.P384() || curveName == "P-384":
 		oid = oidCurveP384
-	case "P-521":
+	case o.ECDSACurve == elliptic.P521() || curveName == "P-512":
 		oid = oidCurveP521
+	case o.ECDSACurve == secp256k1.S256() || strings.EqualFold(curveName, "secp256k1") || strings.EqualFold(curveName, "P-256k1"):
+		oid = oidCurveS256
 	default:
 		return nil, errors.New("unsupported ECDSA curve")
 	}
