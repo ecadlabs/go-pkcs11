@@ -392,6 +392,7 @@ type slotOptions struct {
 	flags    C.CK_FLAGS
 }
 
+// UserType represents a user type
 type UserType uint
 
 const (
@@ -410,6 +411,7 @@ func (u UserType) String() string {
 	}
 }
 
+// OptPIN sets PIN for logging into a slot
 func OptPIN(pin string) SlotOption {
 	return func(o *slotOptions) { o.pin = pin }
 }
@@ -430,10 +432,12 @@ func OptSecurityOfficerPIN(pin string) SlotOption {
 	}
 }
 
+// OptPIN sets a user type for logging into a slot
 func OptUserType(ut UserType) SlotOption {
 	return func(o *slotOptions) { o.userType = ut }
 }
 
+// OptReadWrite sets a read-write session mode
 func OptReadWrite(o *slotOptions) { o.flags |= C.CKF_RW_SESSION }
 
 // Slot creates a session with the given slot, by default read-only. Users
@@ -712,8 +716,7 @@ func (s *Slot) Objects(opts ...Filter) (objs []*Object, err error) {
 	return objs, nil
 }
 
-// Class is the primary object type. Such as a certificate, public key, or
-// private key.
+// Class is the primary object type. Such as a certificate, public key, or private key.
 type Class uint
 
 // Set of classes supported by this package.
@@ -1101,13 +1104,18 @@ func (o *Object) findPublicKey(kt KeyType) (*Object, error) {
 	return pubObj, nil
 }
 
+// KeyPair represents a complete key pair. It implements crypto.Signer and optionally crypto.Decrypter (for RSA)
 type KeyPair interface {
 	crypto.Signer
 	Public() crypto.PublicKey
 }
 
+// PrivateKey is a private key object without a corresponding public key. It implements Signer and optionally Decrypter
+// interfaces (for RSA) but not crypto.Signer and crypto.Decrypter
 type PrivateKey interface {
 	Signer
+	// KeyPair finds an adjacent public key in the same slot. If there is more than one public key found then
+	// it returns one with the matching ID if the latter is present
 	KeyPair() (KeyPair, error)
 }
 
@@ -1121,9 +1129,6 @@ type Decrypter interface {
 
 // PrivateKey parses the underlying object as a private key. Both RSA and ECDSA
 // keys are supported.
-//
-// The returned PrivateKey implements crypto.Signer and optionally crypto.Decrypter
-// depending on the supported mechanisms.
 //
 // If the object isn't a public key, this method fails.
 func (o *Object) PrivateKey() (PrivateKey, error) {
