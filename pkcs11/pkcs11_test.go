@@ -364,9 +364,13 @@ func TestECDSAPrivateKey(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			signer, ok := priv.(crypto.Signer)
+			kp, err := priv.KeyPair()
+			if err != nil {
+				t.Fatalf("KeyPair failed: %v", err)
+			}
+			signer, ok := kp.(crypto.Signer)
 			if !ok {
-				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", priv)
+				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", kp)
 			}
 			pub, ok := signer.Public().(*ecdsa.PublicKey)
 			if !ok {
@@ -406,9 +410,13 @@ func TestRSAPrivateKey(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			signer, ok := priv.(crypto.Signer)
+			kp, err := priv.KeyPair()
+			if err != nil {
+				t.Fatalf("KeyPair() failed: %v", err)
+			}
+			signer, ok := kp.(crypto.Signer)
 			if !ok {
-				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", priv)
+				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", kp)
 			}
 			pub, ok := signer.Public().(*rsa.PublicKey)
 			if !ok {
@@ -448,9 +456,13 @@ func TestRSAPrivateKeyPSS(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			signer, ok := priv.(crypto.Signer)
+			kp, err := priv.KeyPair()
+			if err != nil {
+				t.Fatalf("KeyPair failed: %v", err)
+			}
+			signer, ok := kp.(crypto.Signer)
 			if !ok {
-				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", priv)
+				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", kp)
 			}
 			pub, ok := signer.Public().(*rsa.PublicKey)
 			if !ok {
@@ -626,14 +638,18 @@ func TestDecryptOAEP(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			rsaPub := priv.(*rsaPrivateKey).pub
+			kp, err := priv.KeyPair()
+			if err != nil {
+				t.Fatalf("KeyPair() failed: %v", err)
+			}
+			rsaPub := kp.Public().(*rsa.PublicKey)
 			// SHA1 is the only hash function supported by softhsm
 			cipher, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, rsaPub, b, nil)
 			if err != nil {
 				t.Fatalf("EncryptOAEP Error: %v", err)
 			}
 			opts := &rsa.OAEPOptions{Hash: crypto.SHA1}
-			rsaDecrypter := priv.(crypto.Decrypter)
+			rsaDecrypter := kp.(crypto.Decrypter)
 			decrypted, err := rsaDecrypter.Decrypt(nil, cipher, opts)
 			if err != nil {
 				t.Fatalf("Decrypt Error: %v", err)
@@ -663,12 +679,16 @@ func TestDecryptPKCS(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			rsaPub := priv.(*rsaPrivateKey).pub
+			kp, err := priv.KeyPair()
+			if err != nil {
+				t.Fatalf("KeyPair() failed: %v", err)
+			}
+			rsaPub := kp.Public().(*rsa.PublicKey)
 			cipher, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, b)
 			if err != nil {
 				t.Fatalf("EncryptPKCS1v15 Error: %v", err)
 			}
-			rsaDecrypter := priv.(crypto.Decrypter)
+			rsaDecrypter := kp.(crypto.Decrypter)
 
 			// nil opts for decrypting using PKCS #1 v 1.5
 			decrypted, err := rsaDecrypter.Decrypt(nil, cipher, nil)
