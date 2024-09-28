@@ -537,6 +537,10 @@ func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 	return &obj, nil
 }
 
+func (s *Slot) NewObject(h uint) (*Object, error) {
+	return s.newObject(C.CK_OBJECT_HANDLE(h))
+}
+
 type createOptions struct {
 	Label string
 
@@ -930,6 +934,10 @@ func (o *Object) Label() (string, error) {
 
 func (o *Object) ID() []byte {
 	return o.id
+}
+
+func (o *Object) Handle() uint {
+	return uint(o.h)
 }
 
 // setLabel sets the label of the object overwriting any previous value.
