@@ -54,6 +54,7 @@ import (
 	"math/big"
 	"runtime"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -375,8 +376,9 @@ func (m *Module) SlotInfo(id uint32) (*SlotInfo, error) {
 // A slot holds a listable set of objects, such as certificates and
 // cryptographic keys.
 type Slot struct {
-	ft functionTable
-	h  C.CK_SESSION_HANDLE
+	ft  functionTable
+	h   C.CK_SESSION_HANDLE
+	mtx sync.Mutex
 }
 
 type createSlotOptions struct {
@@ -682,6 +684,9 @@ func (s *Slot) Objects(opts ...Filter) (objs []*Object, err error) {
 			ulValueLen: C.CK_ULONG(unsafe.Sizeof(kt)),
 		})
 	}
+
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
 
 	if len(attrs) > 0 {
 		err = s.ft.C_FindObjectsInit(s.h, &attrs[0], C.CK_ULONG(len(attrs)))
@@ -1198,6 +1203,9 @@ func (r *rsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts)
 
 	preAndDigest := append(prefix, digest...)
 
+	r.o.slot.mtx.Lock()
+	defer r.o.slot.mtx.Unlock()
+
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_RSA_PKCS,
 	}
@@ -1279,12 +1287,14 @@ func (r *rsaPrivateKey) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, er
 	defer pinner.Unpin()
 	pinner.Pin(&cParam)
 
+	r.o.slot.mtx.Lock()
+	defer r.o.slot.mtx.Unlock()
+
 	m := C.CK_MECHANISM{
 		mechanism:      C.CKM_RSA_PKCS_PSS,
 		pParameter:     C.CK_VOID_PTR(&cParam),
 		ulParameterLen: C.CK_ULONG(unsafe.Sizeof(cParam)),
 	}
-
 	if err := r.o.slot.ft.C_SignInit(r.o.slot.h, &m, r.o.h); err != nil {
 		return nil, err
 	}
@@ -1302,6 +1312,9 @@ func (r *rsaPrivateKey) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, er
 type ecdsaPrivateKey Object
 
 func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	e.slot.mtx.Lock()
+	defer e.slot.mtx.Unlock()
+
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398884
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_ECDSA,
