@@ -513,25 +513,42 @@ func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 		{
 			_type: C.CKA_ID,
 		},
+		{
+			_type: C.CKA_LABEL,
+		},
 	}
 	if err := s.ft.C_GetAttributeValue(s.h, o, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeValueInvalid) {
 		return nil, err
 	}
-
 	if ln := attrs[0].ulValueLen; ln == C.CK_UNAVAILABLE_INFORMATION || ln == 0 {
 		return nil, errors.New("pkcs11: can't get object class")
 	}
+
+	var attrs2 []C.CK_ATTRIBUTE
 	if ln := attrs[1].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION && ln != 0 {
+		// id is available
 		obj.id = make([]byte, ln)
 		pinner.Pin(&obj.id[0])
-		attrs := []C.CK_ATTRIBUTE{
-			{
-				_type:      C.CKA_ID,
-				pValue:     C.CK_VOID_PTR(&obj.id[0]),
-				ulValueLen: C.CK_ULONG(len(obj.id)),
-			},
-		}
-		if err := s.ft.C_GetAttributeValue(s.h, o, &attrs[0], C.CK_ULONG(len(attrs))); err != nil {
+		attrs2 = append(attrs2, C.CK_ATTRIBUTE{
+			_type:      C.CKA_ID,
+			pValue:     C.CK_VOID_PTR(&obj.id[0]),
+			ulValueLen: C.CK_ULONG(len(obj.id)),
+		})
+	}
+	if ln := attrs[2].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION && ln != 0 {
+		// label is available
+		obj.label = make([]byte, ln)
+		pinner.Pin(&obj.label[0])
+		attrs2 = append(attrs2, C.CK_ATTRIBUTE{
+			_type:      C.CKA_LABEL,
+			pValue:     C.CK_VOID_PTR(&obj.label[0]),
+			ulValueLen: C.CK_ULONG(len(obj.label)),
+		})
+	}
+
+	if len(attrs2) != 0 {
+		// get additional attributes
+		if err := s.ft.C_GetAttributeValue(s.h, o, &attrs2[0], C.CK_ULONG(len(attrs2))); err != nil {
 			return nil, err
 		}
 	}
@@ -870,6 +887,7 @@ type Object struct {
 	h     C.CK_OBJECT_HANDLE
 	class C.CK_OBJECT_CLASS
 	id    []byte
+	label []byte
 }
 
 // Class returns the type of the object stored. For example, certificate, public
@@ -929,12 +947,8 @@ func (o *Object) setAttribute(attrs []C.CK_ATTRIBUTE) error {
 
 // Label returns a string value attached to an object, which can be used to
 // identify or group sets of keys and certificates.
-func (o *Object) Label() (string, error) {
-	v, err := o.getAttributesBytes([]attrType{C.CKA_LABEL})
-	if err != nil {
-		return "", err
-	}
-	return string(v[0]), err
+func (o *Object) Label() string {
+	return string(o.label)
 }
 
 func (o *Object) ID() []byte {
@@ -954,7 +968,11 @@ func (o *Object) setLabel(s string) error {
 	pinner.Pin(&cs[0])
 
 	attrs := []C.CK_ATTRIBUTE{{C.CKA_LABEL, C.CK_VOID_PTR(&cs[0]), C.CK_ULONG(len(s))}}
-	return o.setAttribute(attrs)
+	if err := o.setAttribute(attrs); err != nil {
+		return err
+	}
+	o.label = []byte(s)
+	return nil
 }
 
 // Certificate parses the underlying object as a certificate. If the object
@@ -1112,11 +1130,11 @@ func (o *Object) findPublicKey(kt KeyType) (*Object, error) {
 	if len(objects) == 1 {
 		pubObj = objects[0]
 	} else {
-		if o.id == nil {
+		if o.id == nil && o.label == nil {
 			return nil, nil
 		}
 		for _, x := range objects {
-			if bytes.Equal(x.id, o.id) {
+			if x.id != nil && bytes.Equal(x.id, o.id) || x.label != nil && bytes.Equal(x.label, o.label) {
 				pubObj = x
 				break
 			}

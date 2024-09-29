@@ -590,10 +590,7 @@ func TestCreateCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create(%v) %v", opt, err)
 	}
-	got, err := o.Label()
-	if err != nil {
-		t.Fatalf("Label(): %v", err)
-	}
+	got := o.Label()
 	if got != want {
 		t.Errorf("Label() did not match, got %s, want %s", got, want)
 	}
@@ -602,10 +599,7 @@ func TestCreateCertificate(t *testing.T) {
 		t.Fatalf("setLabel(): %v", err)
 	}
 	want = "bar"
-	got, err = o.Label()
-	if err != nil {
-		t.Fatalf("Label(): %v", err)
-	}
+	got = o.Label()
 	if got != want {
 		t.Errorf("Label() did not match after setting it, got %s, want %s", got, want)
 	}
