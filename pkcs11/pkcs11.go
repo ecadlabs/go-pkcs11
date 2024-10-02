@@ -175,11 +175,8 @@ type Module struct {
 	// when the Module is closed.
 	mod unsafe.Pointer
 	// List of C functions provided by the module.
-	ft functionTable
-	// Version of the module, used for compatibility.
-	version C.CK_VERSION
-
-	info Info
+	ft   functionTable
+	info ModuleInfo
 }
 
 // Open dlopens a shared library by path, initializing the module.
@@ -216,15 +213,13 @@ func Open(path string) (*Module, error) {
 	}
 
 	return &Module{
-		mod:     module,
-		ft:      ft,
-		version: info.cryptokiVersion,
-		info: Info{
-			Manufacturer: trimPadding(info.manufacturerID[:]),
-			Version: Version{
-				Major: uint8(info.libraryVersion.major),
-				Minor: uint8(info.libraryVersion.minor),
-			},
+		mod: module,
+		ft:  ft,
+		info: ModuleInfo{
+			CryptokiVersion: newVersion(info.cryptokiVersion),
+			Manufacturer:    trimPadding(info.manufacturerID[:]),
+			Version:         newVersion(info.libraryVersion),
+			Description:     trimPadding(info.libraryDescription[:]),
 		},
 	}, nil
 }
@@ -288,7 +283,7 @@ func (m *Module) createSlot(id uint, opts createSlotOptions) error {
 
 // SlotIDs returns the IDs of all slots associated with this module, including
 // ones that haven't been initialized.
-func (m *Module) SlotIDs() ([]uint32, error) {
+func (m *Module) SlotIDs() ([]uint, error) {
 	var n C.CK_ULONG
 	if err := m.ft.C_GetSlotList(C.CK_FALSE, nil, &n); err != nil {
 		return nil, err
@@ -303,9 +298,9 @@ func (m *Module) SlotIDs() ([]uint32, error) {
 	}
 	l = l[:int(n)]
 
-	ids := make([]uint32, len(l))
+	ids := make([]uint, len(l))
 	for i, id := range l {
-		ids[i] = uint32(id)
+		ids[i] = uint(id)
 	}
 	return ids, nil
 }
@@ -316,8 +311,20 @@ type Version struct {
 	Minor uint8
 }
 
-// Info holds global information about the module.
-type Info struct {
+func newVersion(v C.CK_VERSION) Version {
+	return Version{
+		Major: uint8(v.major),
+		Minor: uint8(v.minor),
+	}
+}
+
+func (v Version) String() string {
+	return fmt.Sprintf("%d.%d", v.Major, v.Minor)
+}
+
+// ModuleInfo holds global information about the module.
+type ModuleInfo struct {
+	CryptokiVersion Version
 	// Manufacturer of the implementation. When multiple PKCS #11 devices are
 	// present this is used to differentiate devices.
 	Manufacturer string
@@ -329,45 +336,120 @@ type Info struct {
 
 // SlotInfo holds information about the slot and underlying token.
 type SlotInfo struct {
-	Label  string
-	Model  string
-	Serial string
+	Description     string
+	Manufacturer    string
+	Flags           SlotFlags
+	HardwareVersion Version
+	FirmwareVersion Version
 
-	Description string
+	Token *TokenInfo
 }
+
+type SlotFlags uint
+
+const (
+	SlotTokenPresent    SlotFlags = C.CKF_TOKEN_PRESENT
+	SlotRemovableDevice SlotFlags = C.CKF_REMOVABLE_DEVICE
+	SlotHWSlot          SlotFlags = C.CKF_HW_SLOT
+)
+
+type TokenInfo struct {
+	Label              string
+	Manufacturer       string
+	Model              string
+	SerialNumber       []byte
+	Flags              TokenFlags
+	MaxSessionCount    uint
+	SessionCount       uint
+	MaxRwSessionCount  uint
+	RwSessionCount     uint
+	MaxPinLen          uint
+	MinPinLen          uint
+	TotalPublicMemory  uint
+	FreePublicMemory   uint
+	TotalPrivateMemory uint
+	FreePrivateMemory  uint
+	HardwareVersion    Version
+	FirmwareVersion    Version
+	UTCTime            []byte
+}
+
+type TokenFlags uint
+
+const (
+	TokenRNG                         TokenFlags = C.CKF_RNG
+	TokenWriteProtected              TokenFlags = C.CKF_WRITE_PROTECTED
+	TokenLoginRequired               TokenFlags = C.CKF_LOGIN_REQUIRED
+	TokenUserPinInitialized          TokenFlags = C.CKF_USER_PIN_INITIALIZED
+	TokenRestoreKeyNotNeeded         TokenFlags = C.CKF_RESTORE_KEY_NOT_NEEDED
+	TokenClockOnToken                TokenFlags = C.CKF_CLOCK_ON_TOKEN
+	TokenProtectedAuthenticationPath TokenFlags = C.CKF_PROTECTED_AUTHENTICATION_PATH
+	TokenDualCryptoOperations        TokenFlags = C.CKF_DUAL_CRYPTO_OPERATIONS
+	TokenTokenInitialized            TokenFlags = C.CKF_TOKEN_INITIALIZED
+	TokenSecondaryAuthentication     TokenFlags = C.CKF_SECONDARY_AUTHENTICATION
+	TokenUserPinCountLow             TokenFlags = C.CKF_USER_PIN_COUNT_LOW
+	TokenUserPinFinalTry             TokenFlags = C.CKF_USER_PIN_FINAL_TRY
+	TokenUserPinLocked               TokenFlags = C.CKF_USER_PIN_LOCKED
+	TokenUserPinToBeChanged          TokenFlags = C.CKF_USER_PIN_TO_BE_CHANGED
+	TokenSOPinCountLow               TokenFlags = C.CKF_SO_PIN_COUNT_LOW
+	TokenSOPinFinalTry               TokenFlags = C.CKF_SO_PIN_FINAL_TRY
+	TokenSOPinLocked                 TokenFlags = C.CKF_SO_PIN_LOCKED
+	TokenSOPinToBeChanged            TokenFlags = C.CKF_SO_PIN_TO_BE_CHANGED
+	TokenErrorState                  TokenFlags = C.CKF_ERROR_STATE
+)
 
 func trimPadding(b []C.CK_UTF8CHAR) string {
 	return strings.TrimRight(string(b), " ")
 }
 
 // Info returns additional information about the module.
-func (m *Module) Info() Info {
-	return m.info
+func (m *Module) Info() *ModuleInfo {
+	return &m.info
 }
 
 // SlotInfo queries for information about the slot, such as the label.
-func (m *Module) SlotInfo(id uint32) (*SlotInfo, error) {
-	var (
-		cSlotInfo  C.CK_SLOT_INFO
-		cTokenInfo C.CK_TOKEN_INFO
-		slotID     = C.CK_SLOT_ID(id)
-	)
+func (m *Module) SlotInfo(id uint) (*SlotInfo, error) {
+	var cSlotInfo C.CK_SLOT_INFO
+	slotID := C.CK_SLOT_ID(id)
 	if err := m.ft.C_GetSlotInfo(slotID, &cSlotInfo); err != nil {
 		return nil, err
 	}
 	info := SlotInfo{
-		Description: trimPadding(cSlotInfo.slotDescription[:]),
+		Description:     trimPadding(cSlotInfo.slotDescription[:]),
+		Manufacturer:    trimPadding(cSlotInfo.manufacturerID[:]),
+		Flags:           SlotFlags(cSlotInfo.flags),
+		HardwareVersion: newVersion(cSlotInfo.hardwareVersion),
+		FirmwareVersion: newVersion(cSlotInfo.firmwareVersion),
 	}
 	if (cSlotInfo.flags & C.CKF_TOKEN_PRESENT) == 0 {
 		return &info, nil
 	}
 
+	var cTokenInfo C.CK_TOKEN_INFO
 	if err := m.ft.C_GetTokenInfo(slotID, &cTokenInfo); err != nil {
 		return nil, err
 	}
-	info.Label = trimPadding(cTokenInfo.label[:])
-	info.Model = trimPadding(cTokenInfo.model[:])
-	info.Serial = trimPadding(cTokenInfo.serialNumber[:])
+
+	info.Token = &TokenInfo{
+		Label:              trimPadding(cTokenInfo.label[:]),
+		Manufacturer:       trimPadding(cTokenInfo.manufacturerID[:]),
+		Model:              trimPadding(cTokenInfo.model[:]),
+		SerialNumber:       unsafe.Slice((*byte)(&cTokenInfo.serialNumber[0]), len(cTokenInfo.serialNumber)),
+		Flags:              TokenFlags(cTokenInfo.flags),
+		MaxSessionCount:    uint(cTokenInfo.ulMaxSessionCount),
+		SessionCount:       uint(cTokenInfo.ulSessionCount),
+		MaxRwSessionCount:  uint(cTokenInfo.ulMaxRwSessionCount),
+		RwSessionCount:     uint(cTokenInfo.ulRwSessionCount),
+		MaxPinLen:          uint(cTokenInfo.ulMaxPinLen),
+		MinPinLen:          uint(cTokenInfo.ulMinPinLen),
+		TotalPublicMemory:  uint(cTokenInfo.ulTotalPublicMemory),
+		FreePublicMemory:   uint(cTokenInfo.ulFreePublicMemory),
+		TotalPrivateMemory: uint(cTokenInfo.ulTotalPrivateMemory),
+		FreePrivateMemory:  uint(cTokenInfo.ulFreePrivateMemory),
+		HardwareVersion:    newVersion(cTokenInfo.hardwareVersion),
+		FirmwareVersion:    newVersion(cTokenInfo.firmwareVersion),
+		UTCTime:            unsafe.Slice((*byte)(&cTokenInfo.utcTime[0]), len(cTokenInfo.utcTime)),
+	}
 	return &info, nil
 }
 

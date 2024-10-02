@@ -210,8 +210,8 @@ func TestSlotInfo(t *testing.T) {
 		t.Fatalf("SlotInfo(0): %v", err)
 	}
 	wantLabel := testLabel
-	if info.Label != wantLabel {
-		t.Errorf("SlotInfo() unexpected label, got %s, want %s", info.Label, wantLabel)
+	if info.Token.Label != wantLabel {
+		t.Errorf("SlotInfo() unexpected label, got %s, want %s", info.Token.Label, wantLabel)
 	}
 }
 
