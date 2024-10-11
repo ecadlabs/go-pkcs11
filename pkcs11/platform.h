@@ -11,4 +11,6 @@
 #define NULL_PTR 0
 #endif
 
+#define CK_PKCS11_2_0_ONLY
+
 #include "../third_party/pkcs11/pkcs11.h"

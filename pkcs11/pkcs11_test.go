@@ -21,8 +21,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
@@ -307,46 +305,6 @@ func TestECDSAPublicKey(t *testing.T) {
 	}
 }
 
-func TestRSAPublicKey(t *testing.T) {
-	tests := []struct {
-		name string
-		bits int
-	}{
-		{"2048", 2048},
-		{"4096", 4096},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-
-			o := keyOptions{RSABits: test.bits}
-			if _, err := s.generate(o); err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-			objs, err := s.Objects(FilterClass(ClassPublicKey))
-			if err != nil {
-				t.Fatalf("Objects(): %v", err)
-			}
-			if len(objs) != 1 {
-				t.Fatalf("Objects() returned an unexpected number of objects, got %d, want 1", len(objs))
-			}
-			obj := objs[0]
-			pub, err := obj.PublicKey()
-			if err != nil {
-				t.Fatalf("PublicKey(): %v", err)
-			}
-			rsaPub, ok := pub.(*rsa.PublicKey)
-			if !ok {
-				t.Fatalf("PublicKey() unexpected type, got %T, want *rsa.PublicKey", pub)
-			}
-			if got := rsaPub.Size() * 8; got != test.bits {
-				t.Errorf("Generate returned public key with size %d, want %d", got, test.bits)
-			}
-		})
-	}
-}
-
 func TestECDSAPrivateKey(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -367,7 +325,7 @@ func TestECDSAPrivateKey(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate(%#v) failed: %v", o, err)
 			}
-			kp, err := priv.KeyPair()
+			kp, err := priv.KeyPair(MatchID | MatchLabel)
 			if err != nil {
 				t.Fatalf("KeyPair failed: %v", err)
 			}
@@ -390,101 +348,6 @@ func TestECDSAPrivateKey(t *testing.T) {
 			}
 			if !ecdsa.VerifyASN1(pub, digest, sig) {
 				t.Errorf("Signature failed to verify")
-			}
-		})
-	}
-}
-
-func TestRSAPrivateKey(t *testing.T) {
-	tests := []struct {
-		name string
-		bits int
-	}{
-		{"2048", 2048},
-		{"4096", 4096},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-
-			o := keyOptions{RSABits: test.bits}
-			priv, err := s.generate(o)
-			if err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-			kp, err := priv.KeyPair()
-			if err != nil {
-				t.Fatalf("KeyPair() failed: %v", err)
-			}
-			signer, ok := kp.(crypto.Signer)
-			if !ok {
-				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", kp)
-			}
-			pub, ok := signer.Public().(*rsa.PublicKey)
-			if !ok {
-				t.Fatalf("Public() key is unexpected type, got %T, want *rsa.PublicKey", pub)
-			}
-
-			h := sha256.New()
-			h.Write([]byte("test"))
-			digest := h.Sum(nil)
-
-			sig, err := signer.Sign(rand.Reader, digest, crypto.SHA256)
-			if err != nil {
-				t.Fatalf("Sign() failed: %v", err)
-			}
-			if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest, sig); err != nil {
-				t.Errorf("Signature failed to verify: %v", err)
-			}
-		})
-	}
-}
-
-func TestRSAPrivateKeyPSS(t *testing.T) {
-	tests := []struct {
-		name string
-		bits int
-	}{
-		{"2048", 2048},
-		{"4096", 4096},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-
-			o := keyOptions{RSABits: test.bits}
-			priv, err := s.generate(o)
-			if err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-			kp, err := priv.KeyPair()
-			if err != nil {
-				t.Fatalf("KeyPair failed: %v", err)
-			}
-			signer, ok := kp.(crypto.Signer)
-			if !ok {
-				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", kp)
-			}
-			pub, ok := signer.Public().(*rsa.PublicKey)
-			if !ok {
-				t.Fatalf("Public() key is unexpected type, got %T, want *rsa.PublicKey", pub)
-			}
-
-			h := sha256.New()
-			h.Write([]byte("test"))
-			digest := h.Sum(nil)
-			opts := &rsa.PSSOptions{
-				Hash: crypto.SHA256,
-			}
-
-			sig, err := signer.Sign(rand.Reader, digest, opts)
-			if err != nil {
-				t.Fatalf("Sign() failed: %v", err)
-			}
-			if err := rsa.VerifyPSS(pub, crypto.SHA256, digest, sig, opts); err != nil {
-				t.Errorf("Signature failed to verify: %v", err)
 			}
 		})
 	}
@@ -614,87 +477,5 @@ func TestCreateCertificate(t *testing.T) {
 	}
 	if !bytes.Equal(gotCert.Raw, cert.Raw) {
 		t.Errorf("Returned certificate did not match loaded certificate")
-	}
-}
-
-func TestDecryptOAEP(t *testing.T) {
-	msg := "Plain text to encrypt"
-	b := []byte(msg)
-	tests := []struct {
-		name string
-		bits int
-	}{
-		{"2048", 2048},
-		{"4096", 4096},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-			o := keyOptions{RSABits: test.bits}
-			priv, err := s.generate(o)
-			if err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-			kp, err := priv.KeyPair()
-			if err != nil {
-				t.Fatalf("KeyPair() failed: %v", err)
-			}
-			rsaPub := kp.Public().(*rsa.PublicKey)
-			// SHA1 is the only hash function supported by softhsm
-			cipher, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, rsaPub, b, nil)
-			if err != nil {
-				t.Fatalf("EncryptOAEP Error: %v", err)
-			}
-			opts := &rsa.OAEPOptions{Hash: crypto.SHA1}
-			rsaDecrypter := kp.(crypto.Decrypter)
-			decrypted, err := rsaDecrypter.Decrypt(nil, cipher, opts)
-			if err != nil {
-				t.Fatalf("Decrypt Error: %v", err)
-			}
-			if string(decrypted) != msg {
-				t.Errorf("Decrypt Error: expected %q, got %q", msg, string(decrypted))
-			}
-		})
-	}
-}
-
-func TestDecryptPKCS(t *testing.T) {
-	msg := "Plain text to encrypt"
-	b := []byte(msg)
-	tests := []struct {
-		name string
-		bits int
-	}{
-		{"2048", 2048},
-		{"4096", 4096},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-			o := keyOptions{RSABits: test.bits}
-			priv, err := s.generate(o)
-			if err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-			kp, err := priv.KeyPair()
-			if err != nil {
-				t.Fatalf("KeyPair() failed: %v", err)
-			}
-			rsaPub := kp.Public().(*rsa.PublicKey)
-			cipher, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, b)
-			if err != nil {
-				t.Fatalf("EncryptPKCS1v15 Error: %v", err)
-			}
-			rsaDecrypter := kp.(crypto.Decrypter)
-
-			// nil opts for decrypting using PKCS #1 v 1.5
-			decrypted, err := rsaDecrypter.Decrypt(nil, cipher, nil)
-			if err != nil {
-				t.Fatalf("Decrypt Error: %v", err)
-			}
-			if string(decrypted) != msg {
-				t.Errorf("Decrypt Error: expected %q, got %q", msg, string(decrypted))
-			}
-		})
 	}
 }

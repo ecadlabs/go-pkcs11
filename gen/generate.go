@@ -178,7 +178,7 @@ func (f *functionTable) {{mute_keywords .Name}}(
 		{{- end}}
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "{{.Name}}", code: rValue(rv)}
+		return &Error{fnName: "{{.Name}}", code: rv}
 	}
 	return nil
 }

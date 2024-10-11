@@ -45,7 +45,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rsa"
 	"crypto/x509"
 	asn1enc "encoding/asn1"
 	"errors"
@@ -62,110 +61,7 @@ import (
 	"golang.org/x/crypto/cryptobyte/asn1"
 )
 
-type rValue C.CK_RV
-
-const (
-	rvCancel                        = rValue(C.CKR_CANCEL)
-	rvHostMemory                    = rValue(C.CKR_HOST_MEMORY)
-	rvSlotIdInvalid                 = rValue(C.CKR_SLOT_ID_INVALID)
-	rvGeneralError                  = rValue(C.CKR_GENERAL_ERROR)
-	rvFunctionFailed                = rValue(C.CKR_FUNCTION_FAILED)
-	rvArgumentsBad                  = rValue(C.CKR_ARGUMENTS_BAD)
-	rvNoEvent                       = rValue(C.CKR_NO_EVENT)
-	rvNeedToCreateThreads           = rValue(C.CKR_NEED_TO_CREATE_THREADS)
-	rvCantLock                      = rValue(C.CKR_CANT_LOCK)
-	rvAttributeReadOnly             = rValue(C.CKR_ATTRIBUTE_READ_ONLY)
-	rvAttributeSensitive            = rValue(C.CKR_ATTRIBUTE_SENSITIVE)
-	rvAttributeTypeInvalid          = rValue(C.CKR_ATTRIBUTE_TYPE_INVALID)
-	rvAttributeValueInvalid         = rValue(C.CKR_ATTRIBUTE_VALUE_INVALID)
-	rvActionProhibited              = rValue(C.CKR_ACTION_PROHIBITED)
-	rvDataInvalid                   = rValue(C.CKR_DATA_INVALID)
-	rvDataLenRange                  = rValue(C.CKR_DATA_LEN_RANGE)
-	rvDeviceError                   = rValue(C.CKR_DEVICE_ERROR)
-	rvDeviceMemory                  = rValue(C.CKR_DEVICE_MEMORY)
-	rvDeviceRemoved                 = rValue(C.CKR_DEVICE_REMOVED)
-	rvEncryptedDataInvalid          = rValue(C.CKR_ENCRYPTED_DATA_INVALID)
-	rvEncryptedDataLenRange         = rValue(C.CKR_ENCRYPTED_DATA_LEN_RANGE)
-	rvFunctionCanceled              = rValue(C.CKR_FUNCTION_CANCELED)
-	rvFunctionNotParallel           = rValue(C.CKR_FUNCTION_NOT_PARALLEL)
-	rvFunctionNotSupported          = rValue(C.CKR_FUNCTION_NOT_SUPPORTED)
-	rvKeyHandleInvalid              = rValue(C.CKR_KEY_HANDLE_INVALID)
-	rvKeySizeRange                  = rValue(C.CKR_KEY_SIZE_RANGE)
-	rvKeyTypeInconsistent           = rValue(C.CKR_KEY_TYPE_INCONSISTENT)
-	rvKeyNotNeeded                  = rValue(C.CKR_KEY_NOT_NEEDED)
-	rvKeyChanged                    = rValue(C.CKR_KEY_CHANGED)
-	rvKeyNeeded                     = rValue(C.CKR_KEY_NEEDED)
-	rvKeyIndigestible               = rValue(C.CKR_KEY_INDIGESTIBLE)
-	rvKeyFunctionNotPermitted       = rValue(C.CKR_KEY_FUNCTION_NOT_PERMITTED)
-	rvKeyNotWrappable               = rValue(C.CKR_KEY_NOT_WRAPPABLE)
-	rvKeyUnextractable              = rValue(C.CKR_KEY_UNEXTRACTABLE)
-	rvMechanismInvalid              = rValue(C.CKR_MECHANISM_INVALID)
-	rvMechanismParamInvalid         = rValue(C.CKR_MECHANISM_PARAM_INVALID)
-	rvObjectHandleInvalid           = rValue(C.CKR_OBJECT_HANDLE_INVALID)
-	rvOperationActive               = rValue(C.CKR_OPERATION_ACTIVE)
-	rvOperationNotInitialized       = rValue(C.CKR_OPERATION_NOT_INITIALIZED)
-	rvPinIncorrect                  = rValue(C.CKR_PIN_INCORRECT)
-	rvPinInvalid                    = rValue(C.CKR_PIN_INVALID)
-	rvPinLenRange                   = rValue(C.CKR_PIN_LEN_RANGE)
-	rvPinExpired                    = rValue(C.CKR_PIN_EXPIRED)
-	rvPinLocked                     = rValue(C.CKR_PIN_LOCKED)
-	rvSessionClosed                 = rValue(C.CKR_SESSION_CLOSED)
-	rvSessionCount                  = rValue(C.CKR_SESSION_COUNT)
-	rvSessionHandleInvalid          = rValue(C.CKR_SESSION_HANDLE_INVALID)
-	rvSessionParallelNotSupported   = rValue(C.CKR_SESSION_PARALLEL_NOT_SUPPORTED)
-	rvSessionReadOnly               = rValue(C.CKR_SESSION_READ_ONLY)
-	rvSessionExists                 = rValue(C.CKR_SESSION_EXISTS)
-	rvSessionReadOnlyExists         = rValue(C.CKR_SESSION_READ_ONLY_EXISTS)
-	rvSessionReadWriteSoExists      = rValue(C.CKR_SESSION_READ_WRITE_SO_EXISTS)
-	rvSignatureInvalid              = rValue(C.CKR_SIGNATURE_INVALID)
-	rvSignatureLenRange             = rValue(C.CKR_SIGNATURE_LEN_RANGE)
-	rvTemplateIncomplete            = rValue(C.CKR_TEMPLATE_INCOMPLETE)
-	rvTemplateInconsistent          = rValue(C.CKR_TEMPLATE_INCONSISTENT)
-	rvTokenNotPresent               = rValue(C.CKR_TOKEN_NOT_PRESENT)
-	rvTokenNotRecognized            = rValue(C.CKR_TOKEN_NOT_RECOGNIZED)
-	rvTokenWriteProtected           = rValue(C.CKR_TOKEN_WRITE_PROTECTED)
-	rvUnwrappingKeyHandleInvalid    = rValue(C.CKR_UNWRAPPING_KEY_HANDLE_INVALID)
-	rvUnwrappingKeySizeRange        = rValue(C.CKR_UNWRAPPING_KEY_SIZE_RANGE)
-	rvUnwrappingKeyTypeInconsistent = rValue(C.CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT)
-	rvUserAlreadyLoggedIn           = rValue(C.CKR_USER_ALREADY_LOGGED_IN)
-	rvUserNotLoggedIn               = rValue(C.CKR_USER_NOT_LOGGED_IN)
-	rvUserPinNotInitialized         = rValue(C.CKR_USER_PIN_NOT_INITIALIZED)
-	rvUserTypeInvalid               = rValue(C.CKR_USER_TYPE_INVALID)
-	rvUserAnotherAlreadyLoggedIn    = rValue(C.CKR_USER_ANOTHER_ALREADY_LOGGED_IN)
-	rvUserTooManyTypes              = rValue(C.CKR_USER_TOO_MANY_TYPES)
-	rvWrappedKeyInvalid             = rValue(C.CKR_WRAPPED_KEY_INVALID)
-	rvWrappedKeyLenRange            = rValue(C.CKR_WRAPPED_KEY_LEN_RANGE)
-	rvWrappingKeyHandleInvalid      = rValue(C.CKR_WRAPPING_KEY_HANDLE_INVALID)
-	rvWrappingKeySizeRange          = rValue(C.CKR_WRAPPING_KEY_SIZE_RANGE)
-	rvWrappingKeyTypeInconsistent   = rValue(C.CKR_WRAPPING_KEY_TYPE_INCONSISTENT)
-	rvRandomSeedNotSupported        = rValue(C.CKR_RANDOM_SEED_NOT_SUPPORTED)
-	rvRandomNoRng                   = rValue(C.CKR_RANDOM_NO_RNG)
-	rvDomainParamsInvalid           = rValue(C.CKR_DOMAIN_PARAMS_INVALID)
-	rvCurveNotSupported             = rValue(C.CKR_CURVE_NOT_SUPPORTED)
-	rvBufferTooSmall                = rValue(C.CKR_BUFFER_TOO_SMALL)
-	rvSavedStateInvalid             = rValue(C.CKR_SAVED_STATE_INVALID)
-	rvInformationSensitive          = rValue(C.CKR_INFORMATION_SENSITIVE)
-	rvStateUnsaveable               = rValue(C.CKR_STATE_UNSAVEABLE)
-	rvCryptokiNotInitialized        = rValue(C.CKR_CRYPTOKI_NOT_INITIALIZED)
-	rvCryptokiAlreadyInitialized    = rValue(C.CKR_CRYPTOKI_ALREADY_INITIALIZED)
-	rvMutexBad                      = rValue(C.CKR_MUTEX_BAD)
-	rvMutexNotLocked                = rValue(C.CKR_MUTEX_NOT_LOCKED)
-	rvFunctionRejected              = rValue(C.CKR_FUNCTION_REJECTED)
-	rvVendorDefined                 = rValue(C.CKR_VENDOR_DEFINED)
-)
-
-// ckStringPadded copies a string into b, padded with ' '. If the string is larger
-// than the provided buffer, this function returns false.
-func ckStringPadded(b []C.CK_UTF8CHAR, s string) bool {
-	if len(s) > len(b) {
-		return false
-	}
-	copy(b, []C.CK_UTF8CHAR(s))
-	for i := len(s); i < len(b); i++ {
-		b[i] = ' '
-	}
-	return true
-}
+var ErrPublicKey = errors.New("pkcs11: no corresponding public key object found")
 
 // Module represents an opened shared library. By default, this package
 // requests locking support from the module, but concurrent safety may
@@ -194,7 +90,7 @@ func Open(path string) (*Module, error) {
 		if module == nil {
 			return nil, fmt.Errorf("pkcs11: error opening library: %s", C.GoString(C.dlerror()))
 		}
-		return nil, &Error{fnName: "C_GetFunctionList", code: rValue(ret)}
+		return nil, &Error{fnName: "C_GetFunctionList", code: ret}
 	}
 	ft := functionTable{t: funcs}
 
@@ -232,51 +128,6 @@ func (m *Module) Close() error {
 	}
 	if C.dlclose(m.mod) != 0 {
 		return fmt.Errorf("pkcs11: dlclose error: %s", C.GoString(C.dlerror()))
-	}
-	return nil
-}
-
-// createSlot configures a slot object. Internally this calls C_InitToken and
-// C_InitPIN to set the admin and user PIN on the slot.
-func (m *Module) createSlot(id uint, opts createSlotOptions) error {
-	if opts.Label == "" {
-		return errors.New("no label provided")
-	}
-	if opts.UserPIN == "" {
-		return errors.New("no user pin provided")
-	}
-	if opts.SecurityOfficerPIN == "" {
-		return errors.New("no admin pin provided")
-	}
-
-	var cLabel [32]C.CK_UTF8CHAR
-	if !ckStringPadded(cLabel[:], opts.Label) {
-		return errors.New("label is too long")
-	}
-
-	cPIN := []C.CK_UTF8CHAR(opts.SecurityOfficerPIN)
-	cPINLen := C.CK_ULONG(len(cPIN))
-
-	err := m.ft.C_InitToken(
-		C.CK_SLOT_ID(id),
-		&cPIN[0],
-		cPINLen,
-		&cLabel[0],
-	)
-	if err != nil {
-		return err
-	}
-
-	s, err := m.Slot(id, OptSecurityOfficerPIN(opts.SecurityOfficerPIN), OptReadWrite)
-	if err != nil {
-		return fmt.Errorf("getting slot: %w", err)
-	}
-	defer s.Close()
-	if err := s.initPIN(opts.UserPIN); err != nil {
-		return fmt.Errorf("configuring user pin: %w", err)
-	}
-	if err := s.logout(); err != nil {
-		return fmt.Errorf("logout: %w", err)
 	}
 	return nil
 }
@@ -463,12 +314,6 @@ type Slot struct {
 	mtx sync.Mutex
 }
 
-type createSlotOptions struct {
-	SecurityOfficerPIN string
-	UserPIN            string
-	Label              string
-}
-
 type SlotOption func(o *slotOptions)
 
 type slotOptions struct {
@@ -565,20 +410,6 @@ func (s *Slot) Close() error {
 	return s.ft.C_CloseSession(s.h)
 }
 
-// TODO(ericchiang): merge with SlotInitialize.
-func (s *Slot) initPIN(pin string) error {
-	if pin == "" {
-		return errors.New("invalid pin")
-	}
-	cPIN := []C.CK_UTF8CHAR(pin)
-	cPINLen := C.CK_ULONG(len(cPIN))
-	return s.ft.C_InitPIN(s.h, &cPIN[0], cPINLen)
-}
-
-func (s *Slot) logout() error {
-	return s.ft.C_Logout(s.h)
-}
-
 func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 	obj := Object{slot: s, h: o}
 
@@ -640,63 +471,6 @@ func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 
 func (s *Slot) NewObject(h uint) (*Object, error) {
 	return s.newObject(C.CK_OBJECT_HANDLE(h))
-}
-
-type createOptions struct {
-	Label string
-
-	X509Certificate *x509.Certificate
-}
-
-func (s *Slot) create(opts createOptions) (*Object, error) {
-	if opts.X509Certificate != nil {
-		return s.createX509Certificate(opts)
-	}
-	return nil, errors.New("no objects provided to import")
-}
-
-// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959709
-func (s *Slot) createX509Certificate(opts createOptions) (*Object, error) {
-	if opts.X509Certificate == nil {
-		return nil, errors.New("no certificate provided")
-	}
-
-	objClass := C.CK_OBJECT_CLASS(C.CKO_CERTIFICATE)
-	ct := C.CK_CERTIFICATE_TYPE(C.CKC_X_509)
-
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-	pinner.Pin(&objClass)
-	pinner.Pin(&ct)
-	pinner.Pin(&opts.X509Certificate.RawSubject[0])
-	pinner.Pin(&opts.X509Certificate.Raw[0])
-
-	attrs := []C.CK_ATTRIBUTE{
-		{C.CKA_CLASS, C.CK_VOID_PTR(&objClass), C.CK_ULONG(unsafe.Sizeof(objClass))},
-		{C.CKA_CERTIFICATE_TYPE, C.CK_VOID_PTR(&ct), C.CK_ULONG(unsafe.Sizeof(ct))},
-		{C.CKA_SUBJECT, C.CK_VOID_PTR(&opts.X509Certificate.RawSubject[0]), C.CK_ULONG(len(opts.X509Certificate.RawSubject))},
-		{C.CKA_VALUE, C.CK_VOID_PTR(&opts.X509Certificate.Raw[0]), C.CK_ULONG(len(opts.X509Certificate.Raw))},
-	}
-
-	if opts.Label != "" {
-		cs := []byte(opts.Label)
-		pinner.Pin(&cs[0])
-		attrs = append(attrs, C.CK_ATTRIBUTE{
-			C.CKA_LABEL,
-			C.CK_VOID_PTR(&cs[0]),
-			C.CK_ULONG(len(opts.Label)),
-		})
-	}
-
-	var h C.CK_OBJECT_HANDLE
-	if err := s.ft.C_CreateObject(s.h, &attrs[0], C.CK_ULONG(len(attrs)), &h); err != nil {
-		return nil, err
-	}
-	obj, err := s.newObject(h)
-	if err != nil {
-		return nil, err
-	}
-	return obj, nil
 }
 
 type filterOpt struct {
@@ -830,16 +604,17 @@ type Class uint
 
 // Set of classes supported by this package.
 const (
-	ClassData             = Class(C.CKO_DATA)
-	ClassCertificate      = Class(C.CKO_CERTIFICATE)
-	ClassPublicKey        = Class(C.CKO_PUBLIC_KEY)
-	ClassPrivateKey       = Class(C.CKO_PRIVATE_KEY)
-	ClassSecretKey        = Class(C.CKO_SECRET_KEY)
-	ClassHWFeature        = Class(C.CKO_HW_FEATURE)
-	ClassDomainParameters = Class(C.CKO_DOMAIN_PARAMETERS)
-	ClassMechanism        = Class(C.CKO_MECHANISM)
-	ClassOTPKey           = Class(C.CKO_OTP_KEY)
-	ClassVendorDefined    = Class(C.CKO_VENDOR_DEFINED)
+	ClassData             Class = C.CKO_DATA
+	ClassCertificate      Class = C.CKO_CERTIFICATE
+	ClassPublicKey        Class = C.CKO_PUBLIC_KEY
+	ClassPrivateKey       Class = C.CKO_PRIVATE_KEY
+	ClassSecretKey        Class = C.CKO_SECRET_KEY
+	ClassHWFeature        Class = C.CKO_HW_FEATURE
+	ClassDomainParameters Class = C.CKO_DOMAIN_PARAMETERS
+	ClassMechanism        Class = C.CKO_MECHANISM
+	ClassOTPKey           Class = C.CKO_OTP_KEY
+	ClassProfile          Class = C.CKO_PROFILE
+	ClassVendorDefined    Class = C.CKO_VENDOR_DEFINED
 )
 
 var classString = map[Class]string{
@@ -852,6 +627,7 @@ var classString = map[Class]string{
 	ClassDomainParameters: "CKO_DOMAIN_PARAMETERS",
 	ClassMechanism:        "CKO_MECHANISM",
 	ClassOTPKey:           "CKO_OTP_KEY",
+	ClassProfile:          "CKO_PROFILE",
 	ClassVendorDefined:    "CKO_VENDOR_DEFINED",
 }
 
@@ -866,93 +642,133 @@ func (c Class) String() string {
 type KeyType uint
 
 const (
-	KeyTypeRSA            = KeyType(C.CKK_RSA)
-	KeyTypeDSA            = KeyType(C.CKK_DSA)
-	KeyTypeDH             = KeyType(C.CKK_DH)
-	KeyTypeEC             = KeyType(C.CKK_EC)
-	KeyTypeX9_42_DH       = KeyType(C.CKK_X9_42_DH)
-	KeyTypeKEA            = KeyType(C.CKK_KEA)
-	KeyTypeGenericSecret  = KeyType(C.CKK_GENERIC_SECRET)
-	KeyTypeRC2            = KeyType(C.CKK_RC2)
-	KeyTypeRC4            = KeyType(C.CKK_RC4)
-	KeyTypeDES            = KeyType(C.CKK_DES)
-	KeyTypeDES2           = KeyType(C.CKK_DES2)
-	KeyTypeDES3           = KeyType(C.CKK_DES3)
-	KeyTypeCAST           = KeyType(C.CKK_CAST)
-	KeyTypeCAST3          = KeyType(C.CKK_CAST3)
-	KeyTypeCAST128        = KeyType(C.CKK_CAST128)
-	KeyTypeRC5            = KeyType(C.CKK_RC5)
-	KeyTypeIDEA           = KeyType(C.CKK_IDEA)
-	KeyTypeSkipjack       = KeyType(C.CKK_SKIPJACK)
-	KeyTypeBATON          = KeyType(C.CKK_BATON)
-	KeyTypeJuniper        = KeyType(C.CKK_JUNIPER)
-	KeyTypeCDMF           = KeyType(C.CKK_CDMF)
-	KeyTypeAES            = KeyType(C.CKK_AES)
-	KeyTypeBlowfish       = KeyType(C.CKK_BLOWFISH)
-	KeyTypeTwofish        = KeyType(C.CKK_TWOFISH)
-	KeyTypeSecurID        = KeyType(C.CKK_SECURID)
-	KeyTypeHOTP           = KeyType(C.CKK_HOTP)
-	KeyTypeACTI           = KeyType(C.CKK_ACTI)
-	KeyTypeCamellia       = KeyType(C.CKK_CAMELLIA)
-	KeyTypeARIA           = KeyType(C.CKK_ARIA)
-	KeyTypeMD5_HMAC       = KeyType(C.CKK_MD5_HMAC)
-	KeyTypeSHA1_HMAC      = KeyType(C.CKK_SHA_1_HMAC)
-	KeyTypeRIPEMD128_HMAC = KeyType(C.CKK_RIPEMD128_HMAC)
-	KeyTypeRIPEMD160_HMAC = KeyType(C.CKK_RIPEMD160_HMAC)
-	KeyTypeSHA256_HMAC    = KeyType(C.CKK_SHA256_HMAC)
-	KeyTypeSHA384_HMAC    = KeyType(C.CKK_SHA384_HMAC)
-	KeyTypeSHA512_HMAC    = KeyType(C.CKK_SHA512_HMAC)
-	KeyTypeSHA224_HMAC    = KeyType(C.CKK_SHA224_HMAC)
-	KeyTypeSeed           = KeyType(C.CKK_SEED)
-	KeyTypeGOSTR3410      = KeyType(C.CKK_GOSTR3410)
-	KeyTypeGOSTR3411      = KeyType(C.CKK_GOSTR3411)
-	KeyTypeGOST28147      = KeyType(C.CKK_GOST28147)
-	KeyTypeVendorDefined  = KeyType(C.CKK_VENDOR_DEFINED)
+	KeyRSA              KeyType = C.CKK_RSA
+	KeyDSA              KeyType = C.CKK_DSA
+	KeyDH               KeyType = C.CKK_DH
+	KeyEC               KeyType = C.CKK_EC
+	KeyX9_42_DH         KeyType = C.CKK_X9_42_DH
+	KeyKEA              KeyType = C.CKK_KEA
+	KeyGenericSecret    KeyType = C.CKK_GENERIC_SECRET
+	KeyRC2              KeyType = C.CKK_RC2
+	KeyRC4              KeyType = C.CKK_RC4
+	KeyDES              KeyType = C.CKK_DES
+	KeyDES2             KeyType = C.CKK_DES2
+	KeyDES3             KeyType = C.CKK_DES3
+	KeyCAST             KeyType = C.CKK_CAST
+	KeyCAST3            KeyType = C.CKK_CAST3
+	KeyCAST128          KeyType = C.CKK_CAST128
+	KeyRC5              KeyType = C.CKK_RC5
+	KeyIDEA             KeyType = C.CKK_IDEA
+	KeySkipjack         KeyType = C.CKK_SKIPJACK
+	KeyBATON            KeyType = C.CKK_BATON
+	KeyJuniper          KeyType = C.CKK_JUNIPER
+	KeyCDMF             KeyType = C.CKK_CDMF
+	KeyAES              KeyType = C.CKK_AES
+	KeyBlowfish         KeyType = C.CKK_BLOWFISH
+	KeyTwofish          KeyType = C.CKK_TWOFISH
+	KeySecurID          KeyType = C.CKK_SECURID
+	KeyHOTP             KeyType = C.CKK_HOTP
+	KeyACTI             KeyType = C.CKK_ACTI
+	KeyCamellia         KeyType = C.CKK_CAMELLIA
+	KeyARIA             KeyType = C.CKK_ARIA
+	KeyMD5_HMAC         KeyType = C.CKK_MD5_HMAC
+	KeySHA1_HMAC        KeyType = C.CKK_SHA_1_HMAC
+	KeyRIPEMD128_HMAC   KeyType = C.CKK_RIPEMD128_HMAC
+	KeyRIPEMD160_HMAC   KeyType = C.CKK_RIPEMD160_HMAC
+	KeySHA256_HMAC      KeyType = C.CKK_SHA256_HMAC
+	KeySHA384_HMAC      KeyType = C.CKK_SHA384_HMAC
+	KeySHA512_HMAC      KeyType = C.CKK_SHA512_HMAC
+	KeySHA224_HMAC      KeyType = C.CKK_SHA224_HMAC
+	KeySeed             KeyType = C.CKK_SEED
+	KeyGOSTR3410        KeyType = C.CKK_GOSTR3410
+	KeyGOSTR3411        KeyType = C.CKK_GOSTR3411
+	KeyGOST28147        KeyType = C.CKK_GOST28147
+	KeyChaCha20         KeyType = C.CKK_CHACHA20
+	KeyPoly1305         KeyType = C.CKK_POLY1305
+	KeyAES_XTS          KeyType = C.CKK_AES_XTS
+	KeySHA3_224_HMAC    KeyType = C.CKK_SHA3_224_HMAC
+	KeySHA3_256_HMAC    KeyType = C.CKK_SHA3_256_HMAC
+	KeySHA3_384_HMAC    KeyType = C.CKK_SHA3_384_HMAC
+	KeySHA3_512_HMAC    KeyType = C.CKK_SHA3_512_HMAC
+	KeyBLAKE2b_160_HMAC KeyType = C.CKK_BLAKE2B_160_HMAC
+	KeyBLAKE2b_256_HMAC KeyType = C.CKK_BLAKE2B_256_HMAC
+	KeyBLAKE2b_384_HMAC KeyType = C.CKK_BLAKE2B_384_HMAC
+	KeyBLAKE2b_512_HMAC KeyType = C.CKK_BLAKE2B_512_HMAC
+	KeySalsa20          KeyType = C.CKK_SALSA20
+	KeyX2Ratchet        KeyType = C.CKK_X2RATCHET
+	KeyEC_Edwards       KeyType = C.CKK_EC_EDWARDS
+	KeyEC_Montgomery    KeyType = C.CKK_EC_MONTGOMERY
+	KeyHKDF             KeyType = C.CKK_HKDF
+	KeySHA512_224_HMAC  KeyType = C.CKK_SHA512_224_HMAC
+	KeySHA512_256_HMAC  KeyType = C.CKK_SHA512_256_HMAC
+	KeySHA512_T_HMAC    KeyType = C.CKK_SHA512_T_HMAC
+	KeyHSS              KeyType = C.CKK_HSS
+	KeyVendorDefined    KeyType = C.CKK_VENDOR_DEFINED
 )
 
 var ktStr = map[KeyType]string{
-	KeyTypeRSA:            "CKK_RSA",
-	KeyTypeDSA:            "CKK_DSA",
-	KeyTypeDH:             "CKK_DH",
-	KeyTypeEC:             "CKK_EC",
-	KeyTypeX9_42_DH:       "CKK_X9_42_DH",
-	KeyTypeKEA:            "CKK_KEA",
-	KeyTypeGenericSecret:  "CKK_GENERIC_SECRET",
-	KeyTypeRC2:            "CKK_RC2",
-	KeyTypeRC4:            "CKK_RC4",
-	KeyTypeDES:            "CKK_DES",
-	KeyTypeDES2:           "CKK_DES2",
-	KeyTypeDES3:           "CKK_DES3",
-	KeyTypeCAST:           "CKK_CAST",
-	KeyTypeCAST3:          "CKK_CAST3",
-	KeyTypeCAST128:        "CKK_CAST128",
-	KeyTypeRC5:            "CKK_RC5",
-	KeyTypeIDEA:           "CKK_IDEA",
-	KeyTypeSkipjack:       "CKK_SKIPJACK",
-	KeyTypeBATON:          "CKK_BATON",
-	KeyTypeJuniper:        "CKK_JUNIPER",
-	KeyTypeCDMF:           "CKK_CDMF",
-	KeyTypeAES:            "CKK_AES",
-	KeyTypeBlowfish:       "CKK_BLOWFISH",
-	KeyTypeTwofish:        "CKK_TWOFISH",
-	KeyTypeSecurID:        "CKK_SECURID",
-	KeyTypeHOTP:           "CKK_HOTP",
-	KeyTypeACTI:           "CKK_ACTI",
-	KeyTypeCamellia:       "CKK_CAMELLIA",
-	KeyTypeARIA:           "CKK_ARIA",
-	KeyTypeMD5_HMAC:       "CKK_MD5_HMAC",
-	KeyTypeSHA1_HMAC:      "CKK_SHA_1_HMAC",
-	KeyTypeRIPEMD128_HMAC: "CKK_RIPEMD128_HMAC",
-	KeyTypeRIPEMD160_HMAC: "CKK_RIPEMD160_HMAC",
-	KeyTypeSHA256_HMAC:    "CKK_SHA256_HMAC",
-	KeyTypeSHA384_HMAC:    "CKK_SHA384_HMAC",
-	KeyTypeSHA512_HMAC:    "CKK_SHA512_HMAC",
-	KeyTypeSHA224_HMAC:    "CKK_SHA224_HMAC",
-	KeyTypeSeed:           "CKK_SEED",
-	KeyTypeGOSTR3410:      "CKK_GOSTR3410",
-	KeyTypeGOSTR3411:      "CKK_GOSTR3411",
-	KeyTypeGOST28147:      "CKK_GOST28147",
-	KeyTypeVendorDefined:  "CKK_VENDOR_DEFINED",
+	KeyRSA:              "CKK_RSA",
+	KeyDSA:              "CKK_DSA",
+	KeyDH:               "CKK_DH",
+	KeyEC:               "CKK_EC",
+	KeyX9_42_DH:         "CKK_X9_42_DH",
+	KeyKEA:              "CKK_KEA",
+	KeyGenericSecret:    "CKK_GENERIC_SECRET",
+	KeyRC2:              "CKK_RC2",
+	KeyRC4:              "CKK_RC4",
+	KeyDES:              "CKK_DES",
+	KeyDES2:             "CKK_DES2",
+	KeyDES3:             "CKK_DES3",
+	KeyCAST:             "CKK_CAST",
+	KeyCAST3:            "CKK_CAST3",
+	KeyCAST128:          "CKK_CAST128",
+	KeyRC5:              "CKK_RC5",
+	KeyIDEA:             "CKK_IDEA",
+	KeySkipjack:         "CKK_SKIPJACK",
+	KeyBATON:            "CKK_BATON",
+	KeyJuniper:          "CKK_JUNIPER",
+	KeyCDMF:             "CKK_CDMF",
+	KeyAES:              "CKK_AES",
+	KeyBlowfish:         "CKK_BLOWFISH",
+	KeyTwofish:          "CKK_TWOFISH",
+	KeySecurID:          "CKK_SECURID",
+	KeyHOTP:             "CKK_HOTP",
+	KeyACTI:             "CKK_ACTI",
+	KeyCamellia:         "CKK_CAMELLIA",
+	KeyARIA:             "CKK_ARIA",
+	KeyMD5_HMAC:         "CKK_MD5_HMAC",
+	KeySHA1_HMAC:        "CKK_SHA_1_HMAC",
+	KeyRIPEMD128_HMAC:   "CKK_RIPEMD128_HMAC",
+	KeyRIPEMD160_HMAC:   "CKK_RIPEMD160_HMAC",
+	KeySHA256_HMAC:      "CKK_SHA256_HMAC",
+	KeySHA384_HMAC:      "CKK_SHA384_HMAC",
+	KeySHA512_HMAC:      "CKK_SHA512_HMAC",
+	KeySHA224_HMAC:      "CKK_SHA224_HMAC",
+	KeySeed:             "CKK_SEED",
+	KeyGOSTR3410:        "CKK_GOSTR3410",
+	KeyGOSTR3411:        "CKK_GOSTR3411",
+	KeyGOST28147:        "CKK_GOST28147",
+	KeyChaCha20:         "CKK_CHACHA20",
+	KeyPoly1305:         "CKK_POLY1305",
+	KeyAES_XTS:          "CKK_AES_XTS",
+	KeySHA3_224_HMAC:    "CKK_SHA3_224_HMAC",
+	KeySHA3_256_HMAC:    "CKK_SHA3_256_HMAC",
+	KeySHA3_384_HMAC:    "CKK_SHA3_384_HMAC",
+	KeySHA3_512_HMAC:    "CKK_SHA3_512_HMAC",
+	KeyBLAKE2b_160_HMAC: "CKK_BLAKE2B_160_HMAC",
+	KeyBLAKE2b_256_HMAC: "CKK_BLAKE2B_256_HMAC",
+	KeyBLAKE2b_384_HMAC: "CKK_BLAKE2B_384_HMAC",
+	KeyBLAKE2b_512_HMAC: "CKK_BLAKE2B_512_HMAC",
+	KeySalsa20:          "CKK_SALSA20",
+	KeyX2Ratchet:        "CKK_X2RATCHET",
+	KeyEC_Edwards:       "CKK_EC_EDWARDS",
+	KeyEC_Montgomery:    "CKK_EC_MONTGOMERY",
+	KeyHKDF:             "CKK_HKDF",
+	KeySHA512_224_HMAC:  "CKK_SHA512_224_HMAC",
+	KeySHA512_256_HMAC:  "CKK_SHA512_256_HMAC",
+	KeySHA512_T_HMAC:    "CKK_SHA512_T_HMAC",
+	KeyHSS:              "CKK_HSS",
+	KeyVendorDefined:    "CKK_VENDOR_DEFINED",
 }
 
 func (k KeyType) String() string {
@@ -1041,22 +857,6 @@ func (o *Object) Handle() uint {
 	return uint(o.h)
 }
 
-// setLabel sets the label of the object overwriting any previous value.
-func (o *Object) setLabel(s string) error {
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-
-	cs := []byte(s)
-	pinner.Pin(&cs[0])
-
-	attrs := []C.CK_ATTRIBUTE{{C.CKA_LABEL, C.CK_VOID_PTR(&cs[0]), C.CK_ULONG(len(s))}}
-	if err := o.setAttribute(attrs); err != nil {
-		return err
-	}
-	o.label = []byte(s)
-	return nil
-}
-
 // Certificate parses the underlying object as a certificate. If the object
 // isn't a certificate, this method fails.
 func (o *Object) Certificate() (*Certificate, error) {
@@ -1086,64 +886,11 @@ func (o *Object) PublicKey() (crypto.PublicKey, error) {
 	switch kt {
 	case C.CKK_EC:
 		return o.ecdsaPublicKey()
-	case C.CKK_RSA:
-		return o.rsaPublicKey()
+	//case C.CKK_RSA:
+	//	return o.rsaPublicKey()
 	default:
 		return nil, fmt.Errorf("unsupported key type: 0x%08x", kt)
 	}
-}
-
-func (o *Object) rsaPublicKey() (*rsa.PublicKey, error) {
-	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398838
-	attrs, err := o.getAttributesBytes([]attrType{C.CKA_MODULUS, C.CKA_PUBLIC_EXPONENT})
-	if err != nil {
-		return nil, err
-	}
-	var n, e big.Int
-	n.SetBytes(attrs[0])
-	e.SetBytes(attrs[1])
-	return &rsa.PublicKey{N: &n, E: int(e.Int64())}, nil
-}
-
-func (o *Object) rsaPrivateKey() (*rsaPrivateKey, error) {
-	attrs := []C.CK_ATTRIBUTE{
-		{
-			_type: C.CKA_MODULUS,
-		},
-		{
-			_type: C.CKA_MODULUS_BITS,
-		},
-	}
-	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) {
-		return nil, err
-	}
-
-	var bits int
-	if ln := attrs[0].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION && ln != 0 {
-		bits = int(ln) * 8
-	} else if ln := attrs[1].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION && ln != 0 {
-		var pinner runtime.Pinner
-		defer pinner.Unpin()
-
-		var rsaBits C.CK_ULONG
-		pinner.Pin(&rsaBits)
-
-		attrs := []C.CK_ATTRIBUTE{
-			{
-				_type:      C.CKA_MODULUS_BITS,
-				pValue:     C.CK_VOID_PTR(&rsaBits),
-				ulValueLen: C.CK_ULONG(unsafe.Sizeof(rsaBits)),
-			},
-		}
-		if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil {
-			return nil, err
-		}
-		bits = int(rsaBits)
-	} else {
-		return nil, errors.New("pkcs11: can't get RSA modulus size")
-	}
-
-	return &rsaPrivateKey{bits: bits, o: o}, nil
 }
 
 var (
@@ -1200,7 +947,7 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 	}, nil
 }
 
-func (o *Object) findPublicKey(kt KeyType) (*Object, error) {
+func (o *Object) findPublicKey(kt KeyType, flags MatchFlags) (*Object, error) {
 	objects, err := o.slot.Objects(FilterClass(ClassPublicKey), FilterKeyType(kt))
 	if err != nil {
 		return nil, err
@@ -1216,7 +963,8 @@ func (o *Object) findPublicKey(kt KeyType) (*Object, error) {
 			return nil, nil
 		}
 		for _, x := range objects {
-			if x.id != nil && bytes.Equal(x.id, o.id) || x.label != nil && bytes.Equal(x.label, o.label) {
+			if flags&MatchID != 0 && x.id != nil && bytes.Equal(x.id, o.id) ||
+				flags&MatchLabel != 0 && x.label != nil && bytes.Equal(x.label, o.label) {
 				pubObj = x
 				break
 			}
@@ -1231,13 +979,21 @@ type KeyPair interface {
 	Public() crypto.PublicKey
 }
 
+type MatchFlags uint
+
+const (
+	MatchLabel MatchFlags = 1 << iota
+	MatchID
+)
+
 // PrivateKey is a private key object without a corresponding public key. It implements Signer and optionally Decrypter
 // interfaces (for RSA) but not crypto.Signer and crypto.Decrypter
 type PrivateKey interface {
 	Signer
 	// KeyPair finds an adjacent public key in the same slot. If there is more than one public key found then
 	// it returns one with the matching ID if the latter is present
-	KeyPair() (KeyPair, error)
+	KeyPair(flags MatchFlags) (KeyPair, error)
+	AddPublic(pub crypto.PublicKey) (KeyPair, error)
 }
 
 type Signer interface {
@@ -1264,149 +1020,11 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 	switch kt {
 	case C.CKK_EC:
 		return (*ecdsaPrivateKey)(o), nil
-	case C.CKK_RSA:
-		return o.rsaPrivateKey()
+	//case C.CKK_RSA:
+	//	return o.rsaPrivateKey()
 	default:
 		return nil, fmt.Errorf("pkcs11: unsupported key type: 0x%08x", kt)
 	}
-}
-
-// Precomputed ASN1 signature prefixes.
-//
-// Borrowed from crypto/rsa.
-var hashPrefixes = map[crypto.Hash][]byte{
-	crypto.SHA224: {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c},
-	crypto.SHA256: {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
-	crypto.SHA384: {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
-	crypto.SHA512: {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
-}
-
-type rsaPrivateKey struct {
-	o    *Object
-	bits int
-}
-
-func (r *rsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	if o, ok := opts.(*rsa.PSSOptions); ok {
-		return r.signPSS(digest, o)
-	}
-
-	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398842
-	size := opts.HashFunc().Size()
-	if size != len(digest) {
-		return nil, errors.New("pkcs11: input must be hashed")
-	}
-	prefix, ok := hashPrefixes[opts.HashFunc()]
-	if !ok {
-		return nil, fmt.Errorf("pkcs11: unsupported hash function: %v", opts.HashFunc())
-	}
-
-	preAndDigest := append(prefix, digest...)
-
-	r.o.slot.mtx.Lock()
-	defer r.o.slot.mtx.Unlock()
-
-	m := C.CK_MECHANISM{
-		mechanism: C.CKM_RSA_PKCS,
-	}
-	if err := r.o.slot.ft.C_SignInit(r.o.slot.h, &m, r.o.h); err != nil {
-		return nil, err
-	}
-	var sigLen C.CK_ULONG
-	if err := r.o.slot.ft.C_Sign(r.o.slot.h, (*C.CK_BYTE)(&preAndDigest[0]), C.CK_ULONG(len(preAndDigest)), nil, &sigLen); err != nil {
-		return nil, err
-	}
-	sig := make([]byte, sigLen)
-	if err := r.o.slot.ft.C_Sign(r.o.slot.h, (*C.CK_BYTE)(&preAndDigest[0]), C.CK_ULONG(len(preAndDigest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
-		return nil, err
-	}
-
-	return sig, nil
-}
-
-var ErrPublicKey = errors.New("pkcs11: no corresponding public key object found")
-
-func (e *rsaPrivateKey) KeyPair() (KeyPair, error) {
-	pubObj, err := e.o.findPublicKey(KeyTypeRSA)
-	if err != nil {
-		return nil, err
-	}
-	if pubObj == nil {
-		return nil, ErrPublicKey
-	}
-	pub, err := pubObj.rsaPublicKey()
-	if err != nil {
-		return nil, err
-	}
-	return &rsaKeyPair{
-		rsaPrivateKey: e,
-		pub:           pub,
-	}, nil
-}
-
-type rsaKeyPair struct {
-	*rsaPrivateKey
-	pub *rsa.PublicKey
-}
-
-func (p *rsaKeyPair) Public() crypto.PublicKey {
-	return p.pub
-}
-
-func (r *rsaPrivateKey) signPSS(digest []byte, opts *rsa.PSSOptions) ([]byte, error) {
-	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398846
-	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398845
-	var cParam C.CK_RSA_PKCS_PSS_PARAMS
-
-	switch opts.Hash {
-	case crypto.SHA256:
-		cParam.hashAlg = C.CKM_SHA256
-		cParam.mgf = C.CKG_MGF1_SHA256
-	case crypto.SHA384:
-		cParam.hashAlg = C.CKM_SHA384
-		cParam.mgf = C.CKG_MGF1_SHA384
-	case crypto.SHA512:
-		cParam.hashAlg = C.CKM_SHA512
-		cParam.mgf = C.CKG_MGF1_SHA512
-	default:
-		return nil, fmt.Errorf("pkcs11: unsupported hash algorithm: %v", opts.Hash)
-	}
-
-	switch opts.SaltLength {
-	case rsa.PSSSaltLengthAuto:
-		// Same logic as crypto/rsa.
-		l := (r.bits-1+7)/8 - 2 - opts.Hash.Size()
-		cParam.sLen = C.CK_ULONG(l)
-	case rsa.PSSSaltLengthEqualsHash:
-		cParam.sLen = C.CK_ULONG(opts.Hash.Size())
-	default:
-		cParam.sLen = C.CK_ULONG(opts.SaltLength)
-	}
-
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-	pinner.Pin(&cParam)
-
-	r.o.slot.mtx.Lock()
-	defer r.o.slot.mtx.Unlock()
-
-	m := C.CK_MECHANISM{
-		mechanism:      C.CKM_RSA_PKCS_PSS,
-		pParameter:     C.CK_VOID_PTR(&cParam),
-		ulParameterLen: C.CK_ULONG(unsafe.Sizeof(cParam)),
-	}
-	if err := r.o.slot.ft.C_SignInit(r.o.slot.h, &m, r.o.h); err != nil {
-		return nil, err
-	}
-	var sigLen C.CK_ULONG
-	if err := r.o.slot.ft.C_Sign(r.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
-		return nil, err
-	}
-	sig := make([]byte, sigLen)
-	if err := r.o.slot.ft.C_Sign(r.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
-		return nil, err
-	}
-	return []byte(sig), nil
 }
 
 type ecdsaPrivateKey Object
@@ -1443,8 +1061,19 @@ func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 	return b.Bytes()
 }
 
-func (e *ecdsaPrivateKey) KeyPair() (KeyPair, error) {
-	pubObj, err := (*Object)(e).findPublicKey(KeyTypeEC)
+func (e *ecdsaPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
+	}
+	return &ecdsaKeyPair{
+		ecdsaPrivateKey: e,
+		pub:             ecPub,
+	}, nil
+}
+
+func (e *ecdsaPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
+	pubObj, err := (*Object)(e).findPublicKey(KeyEC, flags)
 	if err != nil {
 		return nil, err
 	}
@@ -1540,275 +1169,4 @@ func (c *Certificate) X509() (*x509.Certificate, error) {
 		return nil, fmt.Errorf("pkcs11: error parsing certificate: %w", err)
 	}
 	return cert, nil
-}
-
-// keyOptions holds parameters used for generating a private key.
-type keyOptions struct {
-	// RSABits indicates that the generated key should be a RSA key and also
-	// provides the number of bits.
-	RSABits int
-	// ECDSACurve indicates that the generated key should be an ECDSA key and
-	// identifies the curve used to generate the key.
-	ECDSACurve elliptic.Curve
-
-	// Label for the final object.
-	LabelPublic  string
-	LabelPrivate string
-}
-
-// https://datatracker.ietf.org/doc/html/rfc5480#section-2.1.1.1
-
-// Generate a private key on the slot, creating associated private and public
-// key objects.
-func (s *Slot) generate(opts keyOptions) (PrivateKey, error) {
-	if opts.ECDSACurve != nil && opts.RSABits != 0 {
-		return nil, errors.New("conflicting key parameters provided")
-	}
-	if opts.ECDSACurve != nil {
-		return s.generateECDSA(opts)
-	}
-	if opts.RSABits != 0 {
-		return s.generateRSA(opts)
-	}
-	return nil, errors.New("no key parameters provided")
-}
-
-// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959719
-// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/os/pkcs11-curr-v2.40-os.html#_Toc416959971
-func (s *Slot) generateRSA(o keyOptions) (PrivateKey, error) {
-	var (
-		mechanism = C.CK_MECHANISM{
-			mechanism: C.CKM_RSA_PKCS_KEY_PAIR_GEN,
-		}
-		pubH  C.CK_OBJECT_HANDLE
-		privH C.CK_OBJECT_HANDLE
-	)
-
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-
-	cTrue := C.CK_BBOOL(C.CK_TRUE)
-	cFalse := C.CK_BBOOL(C.CK_FALSE)
-	cModBits := C.CK_ULONG(o.RSABits)
-
-	pinner.Pin(&cTrue)
-	pinner.Pin(&cFalse)
-	pinner.Pin(&cModBits)
-
-	privTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-	}
-
-	if o.LabelPrivate != "" {
-		cs := []byte(o.LabelPrivate)
-		pinner.Pin(&cs[0])
-
-		privTmpl = append(privTmpl, C.CK_ATTRIBUTE{
-			C.CKA_LABEL,
-			C.CK_VOID_PTR(&cs[0]),
-			C.CK_ULONG(len(o.LabelPrivate)),
-		})
-	}
-
-	pubTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_MODULUS_BITS, C.CK_VOID_PTR(&cModBits), C.CK_ULONG(unsafe.Sizeof(cModBits))},
-		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-	}
-
-	if o.LabelPublic != "" {
-		cs := []byte(o.LabelPublic)
-		pinner.Pin(&cs[0])
-
-		pubTmpl = append(pubTmpl, C.CK_ATTRIBUTE{
-			C.CKA_LABEL,
-			C.CK_VOID_PTR(&cs[0]),
-			C.CK_ULONG(len(o.LabelPublic)),
-		})
-	}
-
-	err := s.ft.C_GenerateKeyPair(
-		s.h, &mechanism,
-		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
-		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
-		&pubH, &privH,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	privObj, err := s.newObject(privH)
-	if err != nil {
-		return nil, fmt.Errorf("private key object: %w", err)
-	}
-	priv, err := privObj.PrivateKey()
-	if err != nil {
-		return nil, fmt.Errorf("parsing private key: %w", err)
-	}
-	return priv, nil
-}
-
-// generateECDSA implements the CKM_ECDSA_KEY_PAIR_GEN mechanism.
-//
-// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959719
-// https://datatracker.ietf.org/doc/html/rfc5480#section-2.1.1.1
-// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/os/pkcs11-curr-v2.40-os.html#_Toc416960014
-func (s *Slot) generateECDSA(o keyOptions) (PrivateKey, error) {
-	var (
-		mechanism = C.CK_MECHANISM{
-			mechanism: C.CKM_EC_KEY_PAIR_GEN,
-		}
-		pubH  C.CK_OBJECT_HANDLE
-		privH C.CK_OBJECT_HANDLE
-	)
-
-	if o.ECDSACurve == nil {
-		return nil, errors.New("no curve provided")
-	}
-
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-
-	var oid asn1enc.ObjectIdentifier
-	curveName := o.ECDSACurve.Params().Name
-	switch {
-	case o.ECDSACurve == elliptic.P224() || curveName == "P-224":
-		oid = oidCurveP224
-	case o.ECDSACurve == elliptic.P256() || curveName == "P-256":
-		oid = oidCurveP256
-	case o.ECDSACurve == elliptic.P384() || curveName == "P-384":
-		oid = oidCurveP384
-	case o.ECDSACurve == elliptic.P521() || curveName == "P-512":
-		oid = oidCurveP521
-	case o.ECDSACurve == secp256k1.S256() || strings.EqualFold(curveName, "secp256k1") || strings.EqualFold(curveName, "P-256k1"):
-		oid = oidCurveS256
-	default:
-		return nil, errors.New("unsupported ECDSA curve")
-	}
-
-	var oidBuilder cryptobyte.Builder
-	oidBuilder.AddASN1ObjectIdentifier(oid)
-	ecParam, _ := oidBuilder.Bytes()
-	pinner.Pin(&ecParam[0])
-
-	cTrue := C.CK_BBOOL(C.CK_TRUE)
-	cFalse := C.CK_BBOOL(C.CK_FALSE)
-	pinner.Pin(&cTrue)
-	pinner.Pin(&cFalse)
-
-	privTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-	}
-
-	if o.LabelPrivate != "" {
-		cs := []byte(o.LabelPrivate)
-		pinner.Pin(&cs[0])
-
-		privTmpl = append(privTmpl, C.CK_ATTRIBUTE{
-			C.CKA_LABEL,
-			C.CK_VOID_PTR(&cs[0]),
-			C.CK_ULONG(len(o.LabelPrivate)),
-		})
-	}
-
-	pubTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_EC_PARAMS, C.CK_VOID_PTR(&ecParam[0]), C.CK_ULONG(len(ecParam))},
-		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-	}
-	if o.LabelPublic != "" {
-		cs := []byte(o.LabelPublic)
-		pinner.Pin(&cs[0])
-
-		pubTmpl = append(pubTmpl, C.CK_ATTRIBUTE{
-			C.CKA_LABEL,
-			C.CK_VOID_PTR(&cs[0]),
-			C.CK_ULONG(len(o.LabelPublic)),
-		})
-	}
-
-	err := s.ft.C_GenerateKeyPair(
-		s.h, &mechanism,
-		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
-		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
-		&pubH, &privH,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	privObj, err := s.newObject(privH)
-	if err != nil {
-		return nil, fmt.Errorf("private key object: %w", err)
-	}
-	priv, err := privObj.PrivateKey()
-	if err != nil {
-		return nil, fmt.Errorf("parsing private key: %w", err)
-	}
-	return priv, nil
-}
-
-func (r *rsaPrivateKey) Decrypt(_ io.Reader, encryptedData []byte, opts crypto.DecrypterOpts) ([]byte, error) {
-	var m C.CK_MECHANISM
-
-	if o, ok := opts.(*rsa.OAEPOptions); ok {
-		var cParam C.CK_RSA_PKCS_OAEP_PARAMS
-
-		switch o.Hash {
-		case crypto.SHA256:
-			cParam.hashAlg = C.CKM_SHA256
-			cParam.mgf = C.CKG_MGF1_SHA256
-		case crypto.SHA384:
-			cParam.hashAlg = C.CKM_SHA384
-			cParam.mgf = C.CKG_MGF1_SHA384
-		case crypto.SHA512:
-			cParam.hashAlg = C.CKM_SHA512
-			cParam.mgf = C.CKG_MGF1_SHA512
-		case crypto.SHA1:
-			cParam.hashAlg = C.CKM_SHA_1
-			cParam.mgf = C.CKG_MGF1_SHA1
-		default:
-			return nil, fmt.Errorf("pkcs11: unsupported hash algorithm: %v", o.Hash)
-		}
-
-		cParam.source = C.CKZ_DATA_SPECIFIED
-		cParam.pSourceData = nil
-		cParam.ulSourceDataLen = 0
-
-		var pinner runtime.Pinner
-		defer pinner.Unpin()
-		pinner.Pin(&cParam)
-
-		m = C.CK_MECHANISM{
-			mechanism:      C.CKM_RSA_PKCS_OAEP,
-			pParameter:     C.CK_VOID_PTR(&cParam),
-			ulParameterLen: C.CK_ULONG(unsafe.Sizeof(cParam)),
-		}
-	} else {
-		m = C.CK_MECHANISM{C.CKM_RSA_PKCS, nil, 0}
-	}
-
-	if err := r.o.slot.ft.C_DecryptInit(r.o.slot.h, &m, r.o.h); err != nil {
-		return nil, err
-	}
-
-	var cDecryptedLen C.CK_ULONG
-
-	// First call is used to determine length necessary to hold decrypted data (PKCS #11 5.2)
-	if err := r.o.slot.ft.C_Decrypt(r.o.slot.h, (*C.CK_BYTE)(&encryptedData[0]), C.CK_ULONG(len(encryptedData)), nil, &cDecryptedLen); err != nil {
-		return nil, err
-	}
-
-	decrypted := make([]byte, cDecryptedLen)
-
-	if err := r.o.slot.ft.C_Decrypt(r.o.slot.h, (*C.CK_BYTE)(&encryptedData[0]), C.CK_ULONG(len(encryptedData)), (*C.CK_BYTE)(&decrypted[0]), &cDecryptedLen); err != nil {
-		return nil, err
-	}
-
-	// Removes null padding (PKCS#11 5.2): http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959738
-	return bytes.Trim(decrypted, "\x00"), nil
 }

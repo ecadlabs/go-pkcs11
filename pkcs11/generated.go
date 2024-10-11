@@ -970,7 +970,7 @@ func (f *functionTable) C_Initialize(
 		pInitArgs,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Initialize", code: rValue(rv)}
+		return &Error{fnName: "C_Initialize", code: rv}
 	}
 	return nil
 }
@@ -983,7 +983,7 @@ func (f *functionTable) C_Finalize(
 		pReserved,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Finalize", code: rValue(rv)}
+		return &Error{fnName: "C_Finalize", code: rv}
 	}
 	return nil
 }
@@ -996,7 +996,7 @@ func (f *functionTable) C_GetInfo(
 		pInfo,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetInfo", code: rValue(rv)}
+		return &Error{fnName: "C_GetInfo", code: rv}
 	}
 	return nil
 }
@@ -1009,7 +1009,7 @@ func (f *functionTable) C_GetFunctionList(
 		ppFunctionList,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetFunctionList", code: rValue(rv)}
+		return &Error{fnName: "C_GetFunctionList", code: rv}
 	}
 	return nil
 }
@@ -1026,7 +1026,7 @@ func (f *functionTable) C_GetSlotList(
 		pulCount,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetSlotList", code: rValue(rv)}
+		return &Error{fnName: "C_GetSlotList", code: rv}
 	}
 	return nil
 }
@@ -1041,7 +1041,7 @@ func (f *functionTable) C_GetSlotInfo(
 		pInfo,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetSlotInfo", code: rValue(rv)}
+		return &Error{fnName: "C_GetSlotInfo", code: rv}
 	}
 	return nil
 }
@@ -1056,7 +1056,7 @@ func (f *functionTable) C_GetTokenInfo(
 		pInfo,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetTokenInfo", code: rValue(rv)}
+		return &Error{fnName: "C_GetTokenInfo", code: rv}
 	}
 	return nil
 }
@@ -1073,7 +1073,7 @@ func (f *functionTable) C_GetMechanismList(
 		pulCount,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetMechanismList", code: rValue(rv)}
+		return &Error{fnName: "C_GetMechanismList", code: rv}
 	}
 	return nil
 }
@@ -1090,7 +1090,7 @@ func (f *functionTable) C_GetMechanismInfo(
 		pInfo,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetMechanismInfo", code: rValue(rv)}
+		return &Error{fnName: "C_GetMechanismInfo", code: rv}
 	}
 	return nil
 }
@@ -1109,7 +1109,7 @@ func (f *functionTable) C_InitToken(
 		pLabel,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_InitToken", code: rValue(rv)}
+		return &Error{fnName: "C_InitToken", code: rv}
 	}
 	return nil
 }
@@ -1126,7 +1126,7 @@ func (f *functionTable) C_InitPIN(
 		ulPinLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_InitPIN", code: rValue(rv)}
+		return &Error{fnName: "C_InitPIN", code: rv}
 	}
 	return nil
 }
@@ -1147,7 +1147,7 @@ func (f *functionTable) C_SetPIN(
 		ulNewLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SetPIN", code: rValue(rv)}
+		return &Error{fnName: "C_SetPIN", code: rv}
 	}
 	return nil
 }
@@ -1168,7 +1168,7 @@ func (f *functionTable) C_OpenSession(
 		phSession,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_OpenSession", code: rValue(rv)}
+		return &Error{fnName: "C_OpenSession", code: rv}
 	}
 	return nil
 }
@@ -1181,7 +1181,7 @@ func (f *functionTable) C_CloseSession(
 		hSession,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_CloseSession", code: rValue(rv)}
+		return &Error{fnName: "C_CloseSession", code: rv}
 	}
 	return nil
 }
@@ -1194,7 +1194,7 @@ func (f *functionTable) C_CloseAllSessions(
 		slotID,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_CloseAllSessions", code: rValue(rv)}
+		return &Error{fnName: "C_CloseAllSessions", code: rv}
 	}
 	return nil
 }
@@ -1209,7 +1209,7 @@ func (f *functionTable) C_GetSessionInfo(
 		pInfo,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetSessionInfo", code: rValue(rv)}
+		return &Error{fnName: "C_GetSessionInfo", code: rv}
 	}
 	return nil
 }
@@ -1226,7 +1226,7 @@ func (f *functionTable) C_GetOperationState(
 		pulOperationStateLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetOperationState", code: rValue(rv)}
+		return &Error{fnName: "C_GetOperationState", code: rv}
 	}
 	return nil
 }
@@ -1247,7 +1247,7 @@ func (f *functionTable) C_SetOperationState(
 		hAuthenticationKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SetOperationState", code: rValue(rv)}
+		return &Error{fnName: "C_SetOperationState", code: rv}
 	}
 	return nil
 }
@@ -1266,7 +1266,7 @@ func (f *functionTable) C_Login(
 		ulPinLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Login", code: rValue(rv)}
+		return &Error{fnName: "C_Login", code: rv}
 	}
 	return nil
 }
@@ -1279,7 +1279,7 @@ func (f *functionTable) C_Logout(
 		hSession,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Logout", code: rValue(rv)}
+		return &Error{fnName: "C_Logout", code: rv}
 	}
 	return nil
 }
@@ -1298,7 +1298,7 @@ func (f *functionTable) C_CreateObject(
 		phObject,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_CreateObject", code: rValue(rv)}
+		return &Error{fnName: "C_CreateObject", code: rv}
 	}
 	return nil
 }
@@ -1319,7 +1319,7 @@ func (f *functionTable) C_CopyObject(
 		phNewObject,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_CopyObject", code: rValue(rv)}
+		return &Error{fnName: "C_CopyObject", code: rv}
 	}
 	return nil
 }
@@ -1334,7 +1334,7 @@ func (f *functionTable) C_DestroyObject(
 		hObject,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DestroyObject", code: rValue(rv)}
+		return &Error{fnName: "C_DestroyObject", code: rv}
 	}
 	return nil
 }
@@ -1351,7 +1351,7 @@ func (f *functionTable) C_GetObjectSize(
 		pulSize,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetObjectSize", code: rValue(rv)}
+		return &Error{fnName: "C_GetObjectSize", code: rv}
 	}
 	return nil
 }
@@ -1370,7 +1370,7 @@ func (f *functionTable) C_GetAttributeValue(
 		ulCount,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetAttributeValue", code: rValue(rv)}
+		return &Error{fnName: "C_GetAttributeValue", code: rv}
 	}
 	return nil
 }
@@ -1389,7 +1389,7 @@ func (f *functionTable) C_SetAttributeValue(
 		ulCount,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SetAttributeValue", code: rValue(rv)}
+		return &Error{fnName: "C_SetAttributeValue", code: rv}
 	}
 	return nil
 }
@@ -1406,7 +1406,7 @@ func (f *functionTable) C_FindObjectsInit(
 		ulCount,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_FindObjectsInit", code: rValue(rv)}
+		return &Error{fnName: "C_FindObjectsInit", code: rv}
 	}
 	return nil
 }
@@ -1425,7 +1425,7 @@ func (f *functionTable) C_FindObjects(
 		pulObjectCount,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_FindObjects", code: rValue(rv)}
+		return &Error{fnName: "C_FindObjects", code: rv}
 	}
 	return nil
 }
@@ -1438,7 +1438,7 @@ func (f *functionTable) C_FindObjectsFinal(
 		hSession,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_FindObjectsFinal", code: rValue(rv)}
+		return &Error{fnName: "C_FindObjectsFinal", code: rv}
 	}
 	return nil
 }
@@ -1455,7 +1455,7 @@ func (f *functionTable) C_EncryptInit(
 		hKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_EncryptInit", code: rValue(rv)}
+		return &Error{fnName: "C_EncryptInit", code: rv}
 	}
 	return nil
 }
@@ -1476,7 +1476,7 @@ func (f *functionTable) C_Encrypt(
 		pulEncryptedDataLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Encrypt", code: rValue(rv)}
+		return &Error{fnName: "C_Encrypt", code: rv}
 	}
 	return nil
 }
@@ -1497,7 +1497,7 @@ func (f *functionTable) C_EncryptUpdate(
 		pulEncryptedPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_EncryptUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_EncryptUpdate", code: rv}
 	}
 	return nil
 }
@@ -1514,7 +1514,7 @@ func (f *functionTable) C_EncryptFinal(
 		pulLastEncryptedPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_EncryptFinal", code: rValue(rv)}
+		return &Error{fnName: "C_EncryptFinal", code: rv}
 	}
 	return nil
 }
@@ -1531,7 +1531,7 @@ func (f *functionTable) C_DecryptInit(
 		hKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DecryptInit", code: rValue(rv)}
+		return &Error{fnName: "C_DecryptInit", code: rv}
 	}
 	return nil
 }
@@ -1552,7 +1552,7 @@ func (f *functionTable) C_Decrypt(
 		pulDataLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Decrypt", code: rValue(rv)}
+		return &Error{fnName: "C_Decrypt", code: rv}
 	}
 	return nil
 }
@@ -1573,7 +1573,7 @@ func (f *functionTable) C_DecryptUpdate(
 		pulPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DecryptUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_DecryptUpdate", code: rv}
 	}
 	return nil
 }
@@ -1590,7 +1590,7 @@ func (f *functionTable) C_DecryptFinal(
 		pulLastPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DecryptFinal", code: rValue(rv)}
+		return &Error{fnName: "C_DecryptFinal", code: rv}
 	}
 	return nil
 }
@@ -1605,7 +1605,7 @@ func (f *functionTable) C_DigestInit(
 		pMechanism,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DigestInit", code: rValue(rv)}
+		return &Error{fnName: "C_DigestInit", code: rv}
 	}
 	return nil
 }
@@ -1626,7 +1626,7 @@ func (f *functionTable) C_Digest(
 		pulDigestLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Digest", code: rValue(rv)}
+		return &Error{fnName: "C_Digest", code: rv}
 	}
 	return nil
 }
@@ -1643,7 +1643,7 @@ func (f *functionTable) C_DigestUpdate(
 		ulPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DigestUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_DigestUpdate", code: rv}
 	}
 	return nil
 }
@@ -1658,7 +1658,7 @@ func (f *functionTable) C_DigestKey(
 		hKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DigestKey", code: rValue(rv)}
+		return &Error{fnName: "C_DigestKey", code: rv}
 	}
 	return nil
 }
@@ -1675,7 +1675,7 @@ func (f *functionTable) C_DigestFinal(
 		pulDigestLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DigestFinal", code: rValue(rv)}
+		return &Error{fnName: "C_DigestFinal", code: rv}
 	}
 	return nil
 }
@@ -1692,7 +1692,7 @@ func (f *functionTable) C_SignInit(
 		hKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SignInit", code: rValue(rv)}
+		return &Error{fnName: "C_SignInit", code: rv}
 	}
 	return nil
 }
@@ -1713,7 +1713,7 @@ func (f *functionTable) C_Sign(
 		pulSignatureLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Sign", code: rValue(rv)}
+		return &Error{fnName: "C_Sign", code: rv}
 	}
 	return nil
 }
@@ -1730,7 +1730,7 @@ func (f *functionTable) C_SignUpdate(
 		ulPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SignUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_SignUpdate", code: rv}
 	}
 	return nil
 }
@@ -1747,7 +1747,7 @@ func (f *functionTable) C_SignFinal(
 		pulSignatureLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SignFinal", code: rValue(rv)}
+		return &Error{fnName: "C_SignFinal", code: rv}
 	}
 	return nil
 }
@@ -1764,7 +1764,7 @@ func (f *functionTable) C_SignRecoverInit(
 		hKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SignRecoverInit", code: rValue(rv)}
+		return &Error{fnName: "C_SignRecoverInit", code: rv}
 	}
 	return nil
 }
@@ -1785,7 +1785,7 @@ func (f *functionTable) C_SignRecover(
 		pulSignatureLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SignRecover", code: rValue(rv)}
+		return &Error{fnName: "C_SignRecover", code: rv}
 	}
 	return nil
 }
@@ -1802,7 +1802,7 @@ func (f *functionTable) C_VerifyInit(
 		hKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_VerifyInit", code: rValue(rv)}
+		return &Error{fnName: "C_VerifyInit", code: rv}
 	}
 	return nil
 }
@@ -1823,7 +1823,7 @@ func (f *functionTable) C_Verify(
 		ulSignatureLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_Verify", code: rValue(rv)}
+		return &Error{fnName: "C_Verify", code: rv}
 	}
 	return nil
 }
@@ -1840,7 +1840,7 @@ func (f *functionTable) C_VerifyUpdate(
 		ulPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_VerifyUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_VerifyUpdate", code: rv}
 	}
 	return nil
 }
@@ -1857,7 +1857,7 @@ func (f *functionTable) C_VerifyFinal(
 		ulSignatureLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_VerifyFinal", code: rValue(rv)}
+		return &Error{fnName: "C_VerifyFinal", code: rv}
 	}
 	return nil
 }
@@ -1874,7 +1874,7 @@ func (f *functionTable) C_VerifyRecoverInit(
 		hKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_VerifyRecoverInit", code: rValue(rv)}
+		return &Error{fnName: "C_VerifyRecoverInit", code: rv}
 	}
 	return nil
 }
@@ -1895,7 +1895,7 @@ func (f *functionTable) C_VerifyRecover(
 		pulDataLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_VerifyRecover", code: rValue(rv)}
+		return &Error{fnName: "C_VerifyRecover", code: rv}
 	}
 	return nil
 }
@@ -1916,7 +1916,7 @@ func (f *functionTable) C_DigestEncryptUpdate(
 		pulEncryptedPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DigestEncryptUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_DigestEncryptUpdate", code: rv}
 	}
 	return nil
 }
@@ -1937,7 +1937,7 @@ func (f *functionTable) C_DecryptDigestUpdate(
 		pulPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DecryptDigestUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_DecryptDigestUpdate", code: rv}
 	}
 	return nil
 }
@@ -1958,7 +1958,7 @@ func (f *functionTable) C_SignEncryptUpdate(
 		pulEncryptedPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SignEncryptUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_SignEncryptUpdate", code: rv}
 	}
 	return nil
 }
@@ -1979,7 +1979,7 @@ func (f *functionTable) C_DecryptVerifyUpdate(
 		pulPartLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DecryptVerifyUpdate", code: rValue(rv)}
+		return &Error{fnName: "C_DecryptVerifyUpdate", code: rv}
 	}
 	return nil
 }
@@ -2000,7 +2000,7 @@ func (f *functionTable) C_GenerateKey(
 		phKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GenerateKey", code: rValue(rv)}
+		return &Error{fnName: "C_GenerateKey", code: rv}
 	}
 	return nil
 }
@@ -2027,7 +2027,7 @@ func (f *functionTable) C_GenerateKeyPair(
 		phPrivateKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GenerateKeyPair", code: rValue(rv)}
+		return &Error{fnName: "C_GenerateKeyPair", code: rv}
 	}
 	return nil
 }
@@ -2050,7 +2050,7 @@ func (f *functionTable) C_WrapKey(
 		pulWrappedKeyLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_WrapKey", code: rValue(rv)}
+		return &Error{fnName: "C_WrapKey", code: rv}
 	}
 	return nil
 }
@@ -2077,7 +2077,7 @@ func (f *functionTable) C_UnwrapKey(
 		phKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_UnwrapKey", code: rValue(rv)}
+		return &Error{fnName: "C_UnwrapKey", code: rv}
 	}
 	return nil
 }
@@ -2100,7 +2100,7 @@ func (f *functionTable) C_DeriveKey(
 		phKey,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_DeriveKey", code: rValue(rv)}
+		return &Error{fnName: "C_DeriveKey", code: rv}
 	}
 	return nil
 }
@@ -2117,7 +2117,7 @@ func (f *functionTable) C_SeedRandom(
 		ulSeedLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_SeedRandom", code: rValue(rv)}
+		return &Error{fnName: "C_SeedRandom", code: rv}
 	}
 	return nil
 }
@@ -2134,7 +2134,7 @@ func (f *functionTable) C_GenerateRandom(
 		ulRandomLen,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GenerateRandom", code: rValue(rv)}
+		return &Error{fnName: "C_GenerateRandom", code: rv}
 	}
 	return nil
 }
@@ -2147,7 +2147,7 @@ func (f *functionTable) C_GetFunctionStatus(
 		hSession,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_GetFunctionStatus", code: rValue(rv)}
+		return &Error{fnName: "C_GetFunctionStatus", code: rv}
 	}
 	return nil
 }
@@ -2160,7 +2160,7 @@ func (f *functionTable) C_CancelFunction(
 		hSession,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_CancelFunction", code: rValue(rv)}
+		return &Error{fnName: "C_CancelFunction", code: rv}
 	}
 	return nil
 }
@@ -2177,7 +2177,7 @@ func (f *functionTable) C_WaitForSlotEvent(
 		pRserved,
 	);
 	if rv != C.CKR_OK {
-		return &Error{fnName: "C_WaitForSlotEvent", code: rValue(rv)}
+		return &Error{fnName: "C_WaitForSlotEvent", code: rv}
 	}
 	return nil
 }
