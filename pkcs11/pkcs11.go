@@ -201,6 +201,25 @@ const (
 	SlotHWSlot          SlotFlags = C.CKF_HW_SLOT
 )
 
+var slotFlagStr = []*struct {
+	f   SlotFlags
+	str string
+}{
+	{SlotTokenPresent, "CKF_TOKEN_PRESENT"},
+	{SlotRemovableDevice, "CKF_REMOVABLE_DEVICE"},
+	{SlotHWSlot, "CKF_HW_SLOT"},
+}
+
+func (s SlotFlags) String() string {
+	var x []string
+	for _, f := range slotFlagStr {
+		if s&f.f != 0 {
+			x = append(x, f.str)
+		}
+	}
+	return strings.Join(x, "|")
+}
+
 type TokenInfo struct {
 	Label              string
 	Manufacturer       string
@@ -245,6 +264,41 @@ const (
 	TokenSOPinToBeChanged            TokenFlags = C.CKF_SO_PIN_TO_BE_CHANGED
 	TokenErrorState                  TokenFlags = C.CKF_ERROR_STATE
 )
+
+var tokenFlagStr = []*struct {
+	f   TokenFlags
+	str string
+}{
+	{TokenRNG, "CKF_RNG"},
+	{TokenWriteProtected, "CKF_WRITE_PROTECTED"},
+	{TokenLoginRequired, "CKF_LOGIN_REQUIRED"},
+	{TokenUserPinInitialized, "CKF_USER_PIN_INITIALIZED"},
+	{TokenRestoreKeyNotNeeded, "CKF_RESTORE_KEY_NOT_NEEDED"},
+	{TokenClockOnToken, "CKF_CLOCK_ON_TOKEN"},
+	{TokenProtectedAuthenticationPath, "CKF_PROTECTED_AUTHENTICATION_PATH"},
+	{TokenDualCryptoOperations, "CKF_DUAL_CRYPTO_OPERATIONS"},
+	{TokenTokenInitialized, "CKF_TOKEN_INITIALIZED"},
+	{TokenSecondaryAuthentication, "CKF_SECONDARY_AUTHENTICATION"},
+	{TokenUserPinCountLow, "CKF_USER_PIN_COUNT_LOW"},
+	{TokenUserPinFinalTry, "CKF_USER_PIN_FINAL_TRY"},
+	{TokenUserPinLocked, "CKF_USER_PIN_LOCKED"},
+	{TokenUserPinToBeChanged, "CKF_USER_PIN_TO_BE_CHANGED"},
+	{TokenSOPinCountLow, "CKF_SO_PIN_COUNT_LOW"},
+	{TokenSOPinFinalTry, "CKF_SO_PIN_FINAL_TRY"},
+	{TokenSOPinLocked, "CKF_SO_PIN_LOCKED"},
+	{TokenSOPinToBeChanged, "CKF_SO_PIN_TO_BE_CHANGED"},
+	{TokenErrorState, "CKF_ERROR_STATE"},
+}
+
+func (t TokenFlags) String() string {
+	var x []string
+	for _, f := range tokenFlagStr {
+		if t&f.f != 0 {
+			x = append(x, f.str)
+		}
+	}
+	return strings.Join(x, "|")
+}
 
 func trimPadding(b []C.CK_UTF8CHAR) string {
 	return strings.TrimRight(string(b), " ")

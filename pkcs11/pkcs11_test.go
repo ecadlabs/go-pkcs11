@@ -82,7 +82,7 @@ nBPryTEU4DaFuWh36J5tGuqZFCo9S58dCmajvhAMs2hpw4u6tLCaiaqtUByGnDv9
 6ymrXrM0Nw+Ri1Lz+EMZ71I5uC4BItv+uZNm3XJz+/CDrMw=
 -----END CERTIFICATE-----`
 
-func newSlot(t *testing.T, m *Module) (*Session, error) {
+func newSession(t *testing.T, m *Module) (*Session, error) {
 	ids, err := m.SlotIDs()
 	require.NoError(t, err)
 
@@ -143,13 +143,24 @@ directories.tokendir = %s
 
 	t.Run("Info", func(t *testing.T) {
 		info := m.Info()
-		assert.Equal(t, "SoftHSM", info.Manufacturer)
+		require.Equal(t, "SoftHSM", info.Manufacturer)
 	})
 
+	ids, err := m.SlotIDs()
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	info, err := m.SlotInfo(ids[0])
+	require.NoError(t, err)
+	require.Equal(t, "SoftHSM project", info.Manufacturer)
+	require.Equal(t, SlotTokenPresent, info.Flags)
+	if assert.NotNil(t, info.Token) {
+		require.Equal(t, TokenRNG|TokenLoginRequired|TokenRestoreKeyNotNeeded|TokenSOPinLocked|TokenSOPinToBeChanged, info.Token.Flags)
+	}
+
 	ecdsaTests := []*struct {
-		slot *Session
-		name string
-		opt  ecdsaKeyOptions
+		session *Session
+		name    string
+		opt     ecdsaKeyOptions
 	}{
 		{
 			name: "P256",
@@ -186,19 +197,29 @@ directories.tokendir = %s
 	}
 
 	for _, tt := range ecdsaTests {
-		s, err := newSlot(t, m)
+		s, err := newSession(t, m)
 		require.NoError(t, err)
-		tt.slot = s
+		tt.session = s
 	}
 
 	t.Run("ECDSA", func(t *testing.T) {
 		for _, test := range ecdsaTests {
 			t.Run(test.name, func(t *testing.T) {
-				priv, err := test.slot.generateECDSA(&test.opt)
+				priv, err := test.session.generateECDSA(&test.opt)
 				require.NoError(t, err)
 
+				t.Run("SlotInfo", func(t *testing.T) {
+					info, err := test.session.SlotInfo()
+					require.NoError(t, err)
+					require.Equal(t, "SoftHSM project", info.Manufacturer)
+					require.Equal(t, SlotTokenPresent, info.Flags)
+					if assert.NotNil(t, info.Token) {
+						require.Equal(t, TokenRNG|TokenLoginRequired|TokenUserPinInitialized|TokenRestoreKeyNotNeeded|TokenTokenInitialized, info.Token.Flags)
+					}
+				})
+
 				t.Run("Objects", func(t *testing.T) {
-					objs, err := test.slot.Objects()
+					objs, err := test.session.Objects()
 					require.NoError(t, err)
 
 					expect := []struct {
@@ -209,15 +230,15 @@ directories.tokendir = %s
 						{ClassPrivateKey, test.opt.LabelPrivate},
 					}
 					for i, o := range objs {
-						assert.Equal(t, expect[i].class, o.Class())
-						assert.Equal(t, expect[i].label, o.Label())
+						require.Equal(t, expect[i].class, o.Class())
+						require.Equal(t, expect[i].label, o.Label())
 					}
 				})
 
 				t.Run("Public", func(t *testing.T) {
-					objs, err := test.slot.Objects(FilterClass(ClassPublicKey))
+					objs, err := test.session.Objects(FilterClass(ClassPublicKey))
 					require.NoError(t, err)
-					assert.Equal(t, 1, len(objs))
+					require.Equal(t, 1, len(objs))
 					obj := objs[0]
 					pub, err := obj.PublicKey()
 					require.NoError(t, err)
@@ -239,24 +260,34 @@ directories.tokendir = %s
 
 					sig, err := signer.Sign(rand.Reader, digest[:], nil)
 					require.NoError(t, err)
-					assert.True(t, ecdsa.VerifyASN1(pub, digest[:], sig))
+					require.True(t, ecdsa.VerifyASN1(pub, digest[:], sig))
 				})
 			})
 		}
 	})
 
-	edSlot, err := newSlot(t, m)
+	edSession, err := newSession(t, m)
 	require.NoError(t, err)
 
 	t.Run("Ed25519", func(t *testing.T) {
-		priv, err := edSlot.generateEd25519(&ed25519KeyOptions{
+		priv, err := edSession.generateEd25519(&ed25519KeyOptions{
 			LabelPublic:  testKeyLabel,
 			LabelPrivate: testKeyLabel,
 		})
 		require.NoError(t, err)
 
+		t.Run("SlotInfo", func(t *testing.T) {
+			info, err := edSession.SlotInfo()
+			require.NoError(t, err)
+			require.Equal(t, "SoftHSM project", info.Manufacturer)
+			require.Equal(t, SlotTokenPresent, info.Flags)
+			if assert.NotNil(t, info.Token) {
+				require.Equal(t, TokenRNG|TokenLoginRequired|TokenUserPinInitialized|TokenRestoreKeyNotNeeded|TokenTokenInitialized, info.Token.Flags)
+			}
+		})
+
 		t.Run("Objects", func(t *testing.T) {
-			objs, err := edSlot.Objects()
+			objs, err := edSession.Objects()
 			require.NoError(t, err)
 
 			expect := []struct {
@@ -267,15 +298,15 @@ directories.tokendir = %s
 				{ClassPrivateKey, testKeyLabel},
 			}
 			for i, o := range objs {
-				assert.Equal(t, expect[i].class, o.Class())
-				assert.Equal(t, expect[i].label, o.Label())
+				require.Equal(t, expect[i].class, o.Class())
+				require.Equal(t, expect[i].label, o.Label())
 			}
 		})
 
 		t.Run("Public", func(t *testing.T) {
-			objs, err := edSlot.Objects(FilterClass(ClassPublicKey))
+			objs, err := edSession.Objects(FilterClass(ClassPublicKey))
 			require.NoError(t, err)
-			assert.Equal(t, 1, len(objs))
+			require.Equal(t, 1, len(objs))
 			obj := objs[0]
 			pub, err := obj.PublicKey()
 			require.NoError(t, err)
@@ -298,11 +329,11 @@ directories.tokendir = %s
 
 			sig, err := signer.Sign(rand.Reader, digest[:], nil)
 			require.NoError(t, err)
-			assert.True(t, ed25519.Verify(pub, digest[:], sig))
+			require.True(t, ed25519.Verify(pub, digest[:], sig))
 		})
 	})
 
-	certSlot, err := newSlot(t, m)
+	certSession, err := newSession(t, m)
 	require.NoError(t, err)
 
 	t.Run("Certificate", func(t *testing.T) {
@@ -315,7 +346,7 @@ directories.tokendir = %s
 			X509Certificate: cert,
 			Label:           testCertLabel,
 		}
-		o, err := certSlot.createX509Certificate(opt)
+		o, err := certSession.createX509Certificate(opt)
 		require.NoError(t, err)
 
 		c, err := o.Certificate()
@@ -324,6 +355,6 @@ directories.tokendir = %s
 		gotCert, err := c.X509()
 		require.NoError(t, err)
 
-		assert.Equal(t, cert.Raw, gotCert.Raw)
+		require.Equal(t, cert.Raw, gotCert.Raw)
 	})
 }
