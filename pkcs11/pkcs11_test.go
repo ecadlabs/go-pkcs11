@@ -16,9 +16,9 @@
 package pkcs11
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -26,16 +26,14 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var requireSoftHSMv2 = flag.Bool("require-libsofthsm2", false,
@@ -44,356 +42,13 @@ var requireSoftHSMv2 = flag.Bool("require-libsofthsm2", false,
 const (
 	libSoftHSMPathUnix = "/usr/lib/softhsm/libsofthsm2.so"
 	libSoftHSMPathMac  = "/opt/homebrew/lib/softhsm/libsofthsm2.so"
-	syslogPath         = "/var/log/syslog"
 
-	testAdminPIN = "12345"
-	testPIN      = "1234"
-	testLabel    = "label"
+	testAdminPIN  = "12345"
+	testPIN       = "1234"
+	testSlotLabel = "TestSlot"
+	testCertLabel = "TestCert"
+	testKeyLabel  = "TestKey"
 )
-
-func newTestModule(t *testing.T) *Module {
-	var path string
-	if runtime.GOOS == "darwin" {
-		path = libSoftHSMPathMac
-	} else {
-		path = libSoftHSMPathUnix
-	}
-
-	if _, err := os.Stat(path); err != nil {
-		if *requireSoftHSMv2 {
-			t.Fatalf("libsofthsm2 not installed")
-		}
-		// TODO(ericchiang): do an actual lookup of registered PKCS #11 modules.
-		t.Skipf("libsofthsm2 not installed, skipping testing")
-	}
-
-	if runtime.GOOS != "darwin" {
-		// Open syslog file and seek to end before the tests starts. Anything read
-		// after this will have been logged during the test.
-		f, err := os.Open(syslogPath)
-		if err != nil {
-			t.Fatalf("opening syslog file: %v", err)
-		}
-		if _, err := f.Seek(0, io.SeekEnd); err != nil {
-			f.Close()
-			t.Fatalf("seeking to end of file: %v", err)
-		}
-
-		t.Cleanup(func() {
-			defer f.Close()
-			if !t.Failed() {
-				return
-			}
-
-			data, err := io.ReadAll(f)
-			if err != nil {
-				t.Errorf("reading syslog file: %v", err)
-			}
-			lines := strings.Split(string(data), "\n")
-			for _, line := range lines {
-				// softhsm tags the syslog files using the binary name, not "softhsm"
-				// or a related string. Logs were tagged with "pkcs11.test".
-				if !strings.Contains(line, "pkcs11") {
-					continue
-				}
-
-				t.Logf("%s", line)
-			}
-		})
-	}
-
-	// See softhsm2.conf(5) for config details
-	configPath := filepath.Join(t.TempDir(), "softhsm.conf")
-	tokensPath := filepath.Join(t.TempDir(), "tokens")
-	if err := os.Mkdir(tokensPath, 0755); err != nil {
-		t.Fatalf("create test tokens directory: %v", err)
-	}
-
-	configData := fmt.Sprintf(`
-directories.tokendir = %s
-`, tokensPath)
-	if err := os.WriteFile(configPath, []byte(configData), 0644); err != nil {
-		t.Fatalf("write softhsm config: %v", err)
-	}
-	t.Setenv("SOFTHSM2_CONF", configPath)
-
-	m, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open(%s): %v", path, err)
-	}
-	t.Cleanup(func() {
-		if err := m.Close(); err != nil {
-			t.Errorf("Close module: %v", err)
-		}
-	})
-	return m
-}
-
-func newTestSlot(t *testing.T) *Slot {
-	m := newTestModule(t)
-	opts := createSlotOptions{
-		SecurityOfficerPIN: testAdminPIN,
-		UserPIN:            testPIN,
-		Label:              testLabel,
-	}
-	if err := m.createSlot(0, opts); err != nil {
-		t.Fatalf("createSlot(0, %v): %v", opts, err)
-	}
-
-	s, err := m.Slot(0, OptUserPIN(testPIN), OptReadWrite)
-	if err != nil {
-		t.Fatalf("Slot(0): %v", err)
-	}
-	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
-			t.Errorf("Closing slot: %v", err)
-		}
-	})
-	return s
-}
-
-func TestNewModule(t *testing.T) {
-	newTestModule(t)
-}
-
-func TestSlotInit(t *testing.T) {
-	m := newTestModule(t)
-	opts := createSlotOptions{
-		SecurityOfficerPIN: testAdminPIN,
-		UserPIN:            testPIN,
-		Label:              testLabel,
-	}
-	if err := m.createSlot(0, opts); err != nil {
-		t.Fatalf("createSlot(0, %v): %v", opts, err)
-	}
-}
-
-func TestSlotIDs(t *testing.T) {
-	m := newTestModule(t)
-	got, err := m.SlotIDs()
-	if err != nil {
-		t.Fatalf("SlotIDs(): %v", err)
-	}
-	want := []uint32{0}
-	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
-	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("SlotIDs() returned unexpected value, got %v, want %v", got, want)
-	}
-}
-
-func TestInfo(t *testing.T) {
-	m := newTestModule(t)
-	info := m.Info()
-
-	wantMan := "SoftHSM"
-	if info.Manufacturer != wantMan {
-		t.Errorf("SlotInfo() unexpected manufacturer, got %s, want %s", info.Manufacturer, wantMan)
-	}
-}
-
-func TestSlotInfo(t *testing.T) {
-	m := newTestModule(t)
-	opts := createSlotOptions{
-		SecurityOfficerPIN: testAdminPIN,
-		UserPIN:            testPIN,
-		Label:              testLabel,
-	}
-	if err := m.createSlot(0, opts); err != nil {
-		t.Fatalf("createSlot(0, %v): %v", opts, err)
-	}
-
-	info, err := m.SlotInfo(0)
-	if err != nil {
-		t.Fatalf("SlotInfo(0): %v", err)
-	}
-	wantLabel := testLabel
-	if info.Token.Label != wantLabel {
-		t.Errorf("SlotInfo() unexpected label, got %s, want %s", info.Token.Label, wantLabel)
-	}
-}
-
-func TestSlot(t *testing.T) {
-	tests := []struct {
-		name string
-		opts []SlotOption
-	}{
-		{"Default", []SlotOption{}},
-		{"RWSession", []SlotOption{OptReadWrite}},
-		{"PIN", []SlotOption{OptUserPIN(testPIN)}},
-		{"AdminPIN", []SlotOption{OptReadWrite, OptSecurityOfficerPIN(testAdminPIN)}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			m := newTestModule(t)
-			opts := createSlotOptions{
-				SecurityOfficerPIN: testAdminPIN,
-				UserPIN:            testPIN,
-				Label:              testLabel,
-			}
-			if err := m.createSlot(0, opts); err != nil {
-				t.Fatalf("createSlot(0, %v): %v", opts, err)
-			}
-
-			s, err := m.Slot(0, test.opts...)
-			if err != nil {
-				t.Fatalf("Slot(0): %v", err)
-			}
-			if err := s.Close(); err != nil {
-				t.Fatalf("Close(): %v", err)
-			}
-		})
-	}
-}
-
-func TestGenerateECDSA(t *testing.T) {
-	tests := []struct {
-		name  string
-		curve elliptic.Curve
-	}{
-		{"P256", elliptic.P256()},
-		{"P384", elliptic.P384()},
-		{"P521", elliptic.P521()},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-
-			o := keyOptions{ECDSACurve: test.curve}
-			if _, err := s.generate(o); err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-		})
-	}
-}
-
-func TestECDSAPublicKey(t *testing.T) {
-	tests := []struct {
-		name  string
-		curve elliptic.Curve
-	}{
-		{"P256", elliptic.P256()},
-		{"P384", elliptic.P384()},
-		{"P521", elliptic.P521()},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-
-			o := keyOptions{ECDSACurve: test.curve}
-			if _, err := s.generate(o); err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-			objs, err := s.Objects(FilterClass(ClassPublicKey))
-			if err != nil {
-				t.Fatalf("Objects(): %v", err)
-			}
-			if len(objs) != 1 {
-				t.Fatalf("Objects() returned an unexpected number of objects, got %d, want 1", len(objs))
-			}
-			obj := objs[0]
-			pub, err := obj.PublicKey()
-			if err != nil {
-				t.Fatalf("PublicKey(): %v", err)
-			}
-			if _, ok := pub.(*ecdsa.PublicKey); !ok {
-				t.Errorf("PublicKey() unexpected type, got %T, want *ecdsa.PublicKey", pub)
-			}
-		})
-	}
-}
-
-func TestECDSAPrivateKey(t *testing.T) {
-	tests := []struct {
-		name  string
-		curve elliptic.Curve
-	}{
-		{"P256", elliptic.P256()},
-		{"P384", elliptic.P384()},
-		{"P521", elliptic.P521()},
-		{"S256", secp256k1.S256()},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-
-			o := keyOptions{ECDSACurve: test.curve}
-			priv, err := s.generate(o)
-			if err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-			kp, err := priv.KeyPair(MatchID | MatchLabel)
-			if err != nil {
-				t.Fatalf("KeyPair failed: %v", err)
-			}
-			signer, ok := kp.(crypto.Signer)
-			if !ok {
-				t.Fatalf("generate() key is unexpected type, got %T, want crypto.Signer", kp)
-			}
-			pub, ok := signer.Public().(*ecdsa.PublicKey)
-			if !ok {
-				t.Fatalf("Public() key is unexpected type, got %T, want *ecdsa.PublicKey", pub)
-			}
-
-			h := sha256.New()
-			h.Write([]byte("test"))
-			digest := h.Sum(nil)
-
-			sig, err := signer.Sign(rand.Reader, digest, crypto.SHA256)
-			if err != nil {
-				t.Fatalf("Sign() failed: %v", err)
-			}
-			if !ecdsa.VerifyASN1(pub, digest, sig) {
-				t.Errorf("Signature failed to verify")
-			}
-		})
-	}
-}
-
-func TestObjects(t *testing.T) {
-	tests := []struct {
-		name string
-		opts []Filter
-		want []Class
-	}{
-		{"AllObjects", []Filter{}, []Class{ClassPublicKey, ClassPrivateKey}},
-		{"PrivateKey", []Filter{FilterClass(ClassPrivateKey)}, []Class{ClassPrivateKey}},
-		{"PublicKey", []Filter{FilterClass(ClassPublicKey)}, []Class{ClassPublicKey}},
-		{"ByLabel", []Filter{FilterLabel("privatekey")}, []Class{ClassPrivateKey}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestSlot(t)
-
-			o := keyOptions{
-				ECDSACurve:   elliptic.P256(),
-				LabelPrivate: "privatekey",
-			}
-			if _, err := s.generate(o); err != nil {
-				t.Fatalf("generate(%#v) failed: %v", o, err)
-			}
-
-			objs, err := s.Objects(test.opts...)
-			if err != nil {
-				t.Fatalf("Slot(0).Objects(): %v", err)
-			}
-
-			var got []Class
-			for _, o := range objs {
-				got = append(got, o.Class())
-			}
-			sort.Slice(test.want, func(i, j int) bool { return test.want[i] < test.want[j] })
-			sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
-
-			if !reflect.DeepEqual(test.want, got) {
-				t.Fatalf("Objects() classes mismatch, got %v, want %v", got, test.want)
-			}
-		})
-	}
-}
 
 // Generated with:
 // openssl req -subj '/CN=test' -nodes -x509 -newkey rsa:4096 -keyout /dev/null -out /dev/stdout -days 365
@@ -427,55 +82,236 @@ nBPryTEU4DaFuWh36J5tGuqZFCo9S58dCmajvhAMs2hpw4u6tLCaiaqtUByGnDv9
 6ymrXrM0Nw+Ri1Lz+EMZ71I5uC4BItv+uZNm3XJz+/CDrMw=
 -----END CERTIFICATE-----`
 
-func mustParseCertificate(s string) *x509.Certificate {
-	b, _ := pem.Decode([]byte(s))
-	if b == nil {
-		panic("no pem data in certificate")
+func newSlot(t *testing.T, m *Module) (*Slot, error) {
+	ids, err := m.SlotIDs()
+	require.NoError(t, err)
+
+	id := ids[len(ids)-1]
+	opts := createSlotOptions{
+		SecurityOfficerPIN: testAdminPIN,
+		UserPIN:            testPIN,
+		Label:              testSlotLabel,
 	}
-	cert, err := x509.ParseCertificate(b.Bytes)
+	if err := m.createSlot(id, opts); err != nil {
+		return nil, err
+	}
+
+	s, err := m.Slot(id, OptUserPIN(testPIN), OptReadWrite)
 	if err != nil {
-		panic("parse certificate: " + err.Error())
+		return nil, err
 	}
-	return cert
+	t.Cleanup(func() {
+		require.NoError(t, s.Close())
+	})
+
+	return s, nil
 }
 
-func TestCreateCertificate(t *testing.T) {
-	s := newTestSlot(t)
-
-	cert := mustParseCertificate(testCertData)
-
-	want := "testcert"
-	opt := createOptions{
-		X509Certificate: cert,
-		Label:           want,
-	}
-	o, err := s.create(opt)
-	if err != nil {
-		t.Fatalf("create(%v) %v", opt, err)
-	}
-	got := o.Label()
-	if got != want {
-		t.Errorf("Label() did not match, got %s, want %s", got, want)
+func TestPKCS11(t *testing.T) {
+	var path string
+	if runtime.GOOS == "darwin" {
+		path = libSoftHSMPathMac
+	} else {
+		path = libSoftHSMPathUnix
 	}
 
-	if err := o.setLabel("bar"); err != nil {
-		t.Fatalf("setLabel(): %v", err)
-	}
-	want = "bar"
-	got = o.Label()
-	if got != want {
-		t.Errorf("Label() did not match after setting it, got %s, want %s", got, want)
+	if _, err := os.Stat(path); err != nil {
+		if *requireSoftHSMv2 {
+			t.Fatalf("libsofthsm2 not installed")
+		}
+		t.Skipf("libsofthsm2 not installed, skipping testing")
 	}
 
-	c, err := o.Certificate()
-	if err != nil {
-		t.Fatalf("Certificate(): %v", err)
+	// See softhsm2.conf(5) for config details
+	configPath := filepath.Join(t.TempDir(), "softhsm.conf")
+	tokensPath := t.TempDir()
+
+	configData := fmt.Sprintf(`
+directories.tokendir = %s
+`, tokensPath)
+	if err := os.WriteFile(configPath, []byte(configData), 0644); err != nil {
+		t.Fatalf("write softhsm config: %v", err)
 	}
-	gotCert, err := c.X509()
-	if err != nil {
-		t.Fatalf("Getting X509() certificate: %v", err)
+	t.Setenv("SOFTHSM2_CONF", configPath)
+
+	m, err := Open(path)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		require.NoError(t, m.Close())
+	})
+
+	t.Run("Info", func(t *testing.T) {
+		info := m.Info()
+		assert.Equal(t, "SoftHSM", info.Manufacturer)
+	})
+
+	ecdsaTests := []*struct {
+		slot *Slot
+		name string
+		opt  ecdsaKeyOptions
+	}{
+		{
+			name: "P256",
+			opt: ecdsaKeyOptions{
+				Curve:        elliptic.P256(),
+				LabelPublic:  testKeyLabel,
+				LabelPrivate: testKeyLabel,
+			},
+		},
+		{
+			name: "P384",
+			opt: ecdsaKeyOptions{
+				Curve:        elliptic.P384(),
+				LabelPublic:  testKeyLabel,
+				LabelPrivate: testKeyLabel,
+			},
+		},
+		{
+			name: "P521",
+			opt: ecdsaKeyOptions{
+				Curve:        elliptic.P521(),
+				LabelPublic:  testKeyLabel,
+				LabelPrivate: testKeyLabel,
+			},
+		},
+		{
+			name: "S256",
+			opt: ecdsaKeyOptions{
+				Curve:        secp256k1.S256(),
+				LabelPublic:  testKeyLabel,
+				LabelPrivate: testKeyLabel,
+			},
+		},
 	}
-	if !bytes.Equal(gotCert.Raw, cert.Raw) {
-		t.Errorf("Returned certificate did not match loaded certificate")
+
+	for _, tt := range ecdsaTests {
+		s, err := newSlot(t, m)
+		require.NoError(t, err)
+		tt.slot = s
 	}
+
+	t.Run("ECDSA", func(t *testing.T) {
+		for _, test := range ecdsaTests {
+			t.Run(test.name, func(t *testing.T) {
+				priv, err := test.slot.generateECDSA(&test.opt)
+				require.NoError(t, err)
+
+				t.Run("Objects", func(t *testing.T) {
+					objs, err := test.slot.Objects()
+					require.NoError(t, err)
+
+					classes := make([]Class, len(objs))
+					for i, o := range objs {
+						classes[i] = o.Class()
+					}
+					assert.Equal(t, []Class{ClassPublicKey, ClassPrivateKey}, classes)
+				})
+
+				t.Run("Public", func(t *testing.T) {
+					objs, err := test.slot.Objects(FilterClass(ClassPublicKey))
+					require.NoError(t, err)
+					assert.Equal(t, 1, len(objs))
+					obj := objs[0]
+					pub, err := obj.PublicKey()
+					require.NoError(t, err)
+
+					_, ok := pub.(*ecdsa.PublicKey)
+					require.True(t, ok, "unexpected key type %T", pub)
+				})
+
+				t.Run("Sign", func(t *testing.T) {
+					kp, err := priv.KeyPair(MatchID | MatchLabel)
+					require.NoError(t, err)
+
+					signer, ok := kp.(crypto.Signer)
+					require.True(t, ok, "unexpected key type %T", kp)
+					pub, ok := signer.Public().(*ecdsa.PublicKey)
+					require.True(t, ok, "unexpected key type %T", signer.Public())
+
+					digest := sha256.Sum256([]byte("test"))
+
+					sig, err := signer.Sign(rand.Reader, digest[:], nil)
+					require.NoError(t, err)
+					assert.True(t, ecdsa.VerifyASN1(pub, digest[:], sig))
+				})
+			})
+		}
+	})
+
+	edSlot, err := newSlot(t, m)
+	require.NoError(t, err)
+
+	t.Run("Ed25519", func(t *testing.T) {
+		priv, err := edSlot.generateEd25519(&ed25519KeyOptions{
+			LabelPublic:  testKeyLabel,
+			LabelPrivate: testKeyLabel,
+		})
+		require.NoError(t, err)
+
+		t.Run("Objects", func(t *testing.T) {
+			objs, err := edSlot.Objects()
+			require.NoError(t, err)
+
+			classes := make([]Class, len(objs))
+			for i, o := range objs {
+				classes[i] = o.Class()
+			}
+			assert.Equal(t, []Class{ClassPublicKey, ClassPrivateKey}, classes)
+		})
+
+		t.Run("Public", func(t *testing.T) {
+			objs, err := edSlot.Objects(FilterClass(ClassPublicKey))
+			require.NoError(t, err)
+			assert.Equal(t, 1, len(objs))
+			obj := objs[0]
+			pub, err := obj.PublicKey()
+			require.NoError(t, err)
+
+			pub, ok := pub.(ed25519.PublicKey)
+			require.True(t, ok, "unexpected key type %T", pub)
+			require.Len(t, pub, ed25519.PublicKeySize)
+		})
+
+		t.Run("Sign", func(t *testing.T) {
+			kp, err := priv.KeyPair(MatchID | MatchLabel)
+			require.NoError(t, err)
+
+			signer, ok := kp.(crypto.Signer)
+			require.True(t, ok, "unexpected key type %T", kp)
+			pub, ok := signer.Public().(ed25519.PublicKey)
+			require.True(t, ok, "unexpected key type %T", signer.Public())
+
+			digest := sha256.Sum256([]byte("test"))
+
+			sig, err := signer.Sign(rand.Reader, digest[:], nil)
+			require.NoError(t, err)
+			assert.True(t, ed25519.Verify(pub, digest[:], sig))
+		})
+	})
+
+	certSlot, err := newSlot(t, m)
+	require.NoError(t, err)
+
+	t.Run("Certificate", func(t *testing.T) {
+		b, _ := pem.Decode([]byte(testCertData))
+		require.NotNil(t, b)
+		cert, err := x509.ParseCertificate(b.Bytes)
+		require.NoError(t, err)
+
+		opt := createCertificateOptions{
+			X509Certificate: cert,
+			Label:           testCertLabel,
+		}
+		o, err := certSlot.createX509Certificate(opt)
+		require.NoError(t, err)
+
+		c, err := o.Certificate()
+		require.NoError(t, err)
+
+		gotCert, err := c.X509()
+		require.NoError(t, err)
+
+		assert.Equal(t, cert.Raw, gotCert.Raw)
+	})
 }

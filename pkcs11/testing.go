@@ -16,6 +16,7 @@ import (
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/crypto/cryptobyte/asn1"
 )
 
 type createSlotOptions struct {
@@ -66,31 +67,19 @@ func (m *Module) createSlot(id uint, opts createSlotOptions) error {
 	if err := s.ft.C_InitPIN(s.h, &cUserPIN[0], cUserPINLen); err != nil {
 		return fmt.Errorf("configuring user pin: %w", err)
 	}
-	if err := s.logout(); err != nil {
+	if err := s.ft.C_Logout(s.h); err != nil {
 		return fmt.Errorf("logout: %w", err)
 	}
 	return nil
 }
 
-func (s *Slot) logout() error {
-	return s.ft.C_Logout(s.h)
-}
-
-type createOptions struct {
-	Label string
-
+type createCertificateOptions struct {
+	Label           string
 	X509Certificate *x509.Certificate
 }
 
-func (s *Slot) create(opts createOptions) (*Object, error) {
-	if opts.X509Certificate != nil {
-		return s.createX509Certificate(opts)
-	}
-	return nil, errors.New("no objects provided to import")
-}
-
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959709
-func (s *Slot) createX509Certificate(opts createOptions) (*Object, error) {
+func (s *Slot) createX509Certificate(opts createCertificateOptions) (*Object, error) {
 	if opts.X509Certificate == nil {
 		return nil, errors.New("no certificate provided")
 	}
@@ -133,39 +122,15 @@ func (s *Slot) createX509Certificate(opts createOptions) (*Object, error) {
 	return obj, nil
 }
 
-// setLabel sets the label of the object overwriting any previous value.
-func (o *Object) setLabel(s string) error {
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-
-	cs := []byte(s)
-	pinner.Pin(&cs[0])
-
-	attrs := []C.CK_ATTRIBUTE{{C.CKA_LABEL, C.CK_VOID_PTR(&cs[0]), C.CK_ULONG(len(s))}}
-	if err := o.setAttribute(attrs); err != nil {
-		return err
-	}
-	o.label = []byte(s)
-	return nil
-}
-
-// keyOptions holds parameters used for generating a private key.
-type keyOptions struct {
-	// ECDSACurve indicates that the generated key should be an ECDSA key and
+// ecdsaKeyOptions holds parameters used for generating a private key.
+type ecdsaKeyOptions struct {
+	// Curve indicates that the generated key should be an ECDSA key and
 	// identifies the curve used to generate the key.
-	ECDSACurve elliptic.Curve
+	Curve elliptic.Curve
 
 	// Label for the final object.
 	LabelPublic  string
 	LabelPrivate string
-}
-
-// https://datatracker.ietf.org/doc/html/rfc5480#section-2.1.1.1
-
-// Generate a private key on the slot, creating associated private and public
-// key objects.
-func (s *Slot) generate(opts keyOptions) (PrivateKey, error) {
-	return s.generateECDSA(opts)
 }
 
 // generateECDSA implements the CKM_ECDSA_KEY_PAIR_GEN mechanism.
@@ -173,16 +138,8 @@ func (s *Slot) generate(opts keyOptions) (PrivateKey, error) {
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959719
 // https://datatracker.ietf.org/doc/html/rfc5480#section-2.1.1.1
 // http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/os/pkcs11-curr-v2.40-os.html#_Toc416960014
-func (s *Slot) generateECDSA(o keyOptions) (PrivateKey, error) {
-	var (
-		mechanism = C.CK_MECHANISM{
-			mechanism: C.CKM_EC_KEY_PAIR_GEN,
-		}
-		pubH  C.CK_OBJECT_HANDLE
-		privH C.CK_OBJECT_HANDLE
-	)
-
-	if o.ECDSACurve == nil {
+func (s *Slot) generateECDSA(o *ecdsaKeyOptions) (PrivateKey, error) {
+	if o.Curve == nil {
 		return nil, errors.New("no curve provided")
 	}
 
@@ -190,17 +147,17 @@ func (s *Slot) generateECDSA(o keyOptions) (PrivateKey, error) {
 	defer pinner.Unpin()
 
 	var oid asn1enc.ObjectIdentifier
-	curveName := o.ECDSACurve.Params().Name
+	curveName := o.Curve.Params().Name
 	switch {
-	case o.ECDSACurve == elliptic.P224() || curveName == "P-224":
+	case o.Curve == elliptic.P224() || curveName == "P-224":
 		oid = oidCurveP224
-	case o.ECDSACurve == elliptic.P256() || curveName == "P-256":
+	case o.Curve == elliptic.P256() || curveName == "P-256":
 		oid = oidCurveP256
-	case o.ECDSACurve == elliptic.P384() || curveName == "P-384":
+	case o.Curve == elliptic.P384() || curveName == "P-384":
 		oid = oidCurveP384
-	case o.ECDSACurve == elliptic.P521() || curveName == "P-512":
+	case o.Curve == elliptic.P521() || curveName == "P-512":
 		oid = oidCurveP521
-	case o.ECDSACurve == secp256k1.S256() || strings.EqualFold(curveName, "secp256k1") || strings.EqualFold(curveName, "P-256k1"):
+	case o.Curve == secp256k1.S256() || strings.EqualFold(curveName, "secp256k1") || strings.EqualFold(curveName, "P-256k1"):
 		oid = oidCurveS256
 	default:
 		return nil, errors.New("unsupported ECDSA curve")
@@ -247,6 +204,96 @@ func (s *Slot) generateECDSA(o keyOptions) (PrivateKey, error) {
 			C.CK_ULONG(len(o.LabelPublic)),
 		})
 	}
+
+	mechanism := C.CK_MECHANISM{
+		mechanism: C.CKM_EC_KEY_PAIR_GEN,
+	}
+	var (
+		pubH  C.CK_OBJECT_HANDLE
+		privH C.CK_OBJECT_HANDLE
+	)
+	err := s.ft.C_GenerateKeyPair(
+		s.h, &mechanism,
+		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
+		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
+		&pubH, &privH,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	privObj, err := s.newObject(privH)
+	if err != nil {
+		return nil, fmt.Errorf("private key object: %w", err)
+	}
+	priv, err := privObj.PrivateKey()
+	if err != nil {
+		return nil, fmt.Errorf("parsing private key: %w", err)
+	}
+	return priv, nil
+}
+
+type ed25519KeyOptions struct {
+	LabelPublic  string
+	LabelPrivate string
+}
+
+func (s *Slot) generateEd25519(o *ed25519KeyOptions) (PrivateKey, error) {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	var paramBuilder cryptobyte.Builder
+	paramBuilder.AddASN1(asn1.PrintableString, func(c *cryptobyte.Builder) {
+		c.AddBytes([]byte("edwards25519"))
+	})
+	ecParam, _ := paramBuilder.Bytes()
+	pinner.Pin(&ecParam[0])
+
+	cTrue := C.CK_BBOOL(C.CK_TRUE)
+	cFalse := C.CK_BBOOL(C.CK_FALSE)
+	pinner.Pin(&cTrue)
+	pinner.Pin(&cFalse)
+
+	privTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+
+	if o.LabelPrivate != "" {
+		cs := []byte(o.LabelPrivate)
+		pinner.Pin(&cs[0])
+
+		privTmpl = append(privTmpl, C.CK_ATTRIBUTE{
+			C.CKA_LABEL,
+			C.CK_VOID_PTR(&cs[0]),
+			C.CK_ULONG(len(o.LabelPrivate)),
+		})
+	}
+
+	pubTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_EC_PARAMS, C.CK_VOID_PTR(&ecParam[0]), C.CK_ULONG(len(ecParam))},
+		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+	if o.LabelPublic != "" {
+		cs := []byte(o.LabelPublic)
+		pinner.Pin(&cs[0])
+
+		pubTmpl = append(pubTmpl, C.CK_ATTRIBUTE{
+			C.CKA_LABEL,
+			C.CK_VOID_PTR(&cs[0]),
+			C.CK_ULONG(len(o.LabelPublic)),
+		})
+	}
+
+	mechanism := C.CK_MECHANISM{
+		mechanism: C.CKM_EC_EDWARDS_KEY_PAIR_GEN,
+	}
+	var (
+		pubH  C.CK_OBJECT_HANDLE
+		privH C.CK_OBJECT_HANDLE
+	)
 
 	err := s.ft.C_GenerateKeyPair(
 		s.h, &mechanism,

@@ -16,7 +16,7 @@
 // Package pkcs11 implements logic for using PKCS #11 shared libraries.
 package pkcs11
 
-//go:generate go run ../gen/generate.go -i platform.h -g generated.go -p pkcs11
+//go:generate go run ../gen/generate.go -i generate.h -h platform.h -g generated.go -p pkcs11
 
 /*
 #cgo linux LDFLAGS: -ldl
@@ -44,6 +44,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/x509"
 	asn1enc "encoding/asn1"
@@ -144,10 +145,6 @@ func (m *Module) SlotIDs() ([]uint, error) {
 	if err := m.ft.C_GetSlotList(C.CK_FALSE, &l[0], &n); err != nil {
 		return nil, err
 	}
-	if int(n) > len(l) {
-		return nil, fmt.Errorf("pkcs11: C_GetSlotList returned too many elements, got %d, want %d", int(n), len(l))
-	}
-	l = l[:int(n)]
 
 	ids := make([]uint, len(l))
 	for i, id := range l {
@@ -258,11 +255,9 @@ func (m *Module) Info() *ModuleInfo {
 	return &m.info
 }
 
-// SlotInfo queries for information about the slot, such as the label.
-func (m *Module) SlotInfo(id uint) (*SlotInfo, error) {
+func slotInfo(ft functionTable, slotID C.CK_SLOT_ID) (*SlotInfo, error) {
 	var cSlotInfo C.CK_SLOT_INFO
-	slotID := C.CK_SLOT_ID(id)
-	if err := m.ft.C_GetSlotInfo(slotID, &cSlotInfo); err != nil {
+	if err := ft.C_GetSlotInfo(slotID, &cSlotInfo); err != nil {
 		return nil, err
 	}
 	info := SlotInfo{
@@ -277,7 +272,7 @@ func (m *Module) SlotInfo(id uint) (*SlotInfo, error) {
 	}
 
 	var cTokenInfo C.CK_TOKEN_INFO
-	if err := m.ft.C_GetTokenInfo(slotID, &cTokenInfo); err != nil {
+	if err := ft.C_GetTokenInfo(slotID, &cTokenInfo); err != nil {
 		return nil, err
 	}
 
@@ -304,22 +299,9 @@ func (m *Module) SlotInfo(id uint) (*SlotInfo, error) {
 	return &info, nil
 }
 
-// Slot represents a session to a slot.
-//
-// A slot holds a listable set of objects, such as certificates and
-// cryptographic keys.
-type Slot struct {
-	ft  functionTable
-	h   C.CK_SESSION_HANDLE
-	mtx sync.Mutex
-}
-
-type SlotOption func(o *slotOptions)
-
-type slotOptions struct {
-	pin      string
-	userType UserType
-	flags    C.CK_FLAGS
+// SlotInfo queries for information about the slot, such as the label.
+func (m *Module) SlotInfo(id uint) (*SlotInfo, error) {
+	return slotInfo(m.ft, C.CK_SLOT_ID(id))
 }
 
 // UserType represents a user type
@@ -393,7 +375,7 @@ func (m *Module) Slot(id uint, opts ...SlotOption) (*Slot, error) {
 		return nil, err
 	}
 
-	s := &Slot{ft: m.ft, h: h}
+	s := &Slot{ft: m.ft, h: h, id: id}
 	if so.pin != "" {
 		cPIN := []C.CK_UTF8CHAR(so.pin)
 		if err := s.ft.C_Login(s.h, C.CK_USER_TYPE(so.userType), &cPIN[0], C.CK_ULONG(len(cPIN))); err != nil {
@@ -403,6 +385,33 @@ func (m *Module) Slot(id uint, opts ...SlotOption) (*Slot, error) {
 	}
 
 	return s, nil
+}
+
+// Slot represents a session to a slot.
+//
+// A slot holds a listable set of objects, such as certificates and
+// cryptographic keys.
+type Slot struct {
+	id  uint
+	ft  functionTable
+	h   C.CK_SESSION_HANDLE
+	mtx sync.Mutex
+}
+
+type SlotOption func(o *slotOptions)
+
+type slotOptions struct {
+	pin      string
+	userType UserType
+	flags    C.CK_FLAGS
+}
+
+func (s *Slot) Info() (*SlotInfo, error) {
+	return slotInfo(s.ft, C.CK_SLOT_ID(s.id))
+}
+
+func (s *Slot) ID() uint {
+	return uint(s.id)
 }
 
 // Close releases the slot session.
@@ -886,8 +895,8 @@ func (o *Object) PublicKey() (crypto.PublicKey, error) {
 	switch kt {
 	case C.CKK_EC:
 		return o.ecdsaPublicKey()
-	//case C.CKK_RSA:
-	//	return o.rsaPublicKey()
+	case C.CKK_EC_EDWARDS:
+		return o.ed25519PublicKey()
 	default:
 		return nil, fmt.Errorf("unsupported key type: 0x%08x", kt)
 	}
@@ -945,6 +954,22 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 		X:     x,
 		Y:     y,
 	}, nil
+}
+
+func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
+	attrs, err := o.getAttributesBytes([]attrType{C.CKA_EC_POINT})
+	if err != nil {
+		return nil, err
+	}
+	ptObj := cryptobyte.String(attrs[0])
+	var pt cryptobyte.String
+	if !ptObj.ReadASN1(&pt, asn1.OCTET_STRING) {
+		return nil, fmt.Errorf("pkcs11: error decoding ec point: %w", err)
+	}
+	if len(pt) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("pkcs11: invalid ed25519 public key length %d", len(pt))
+	}
+	return ed25519.PublicKey(pt), nil
 }
 
 func (o *Object) findPublicKey(kt KeyType, flags MatchFlags) (*Object, error) {
@@ -1019,17 +1044,17 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 	}
 	switch kt {
 	case C.CKK_EC:
-		return (*ecdsaPrivateKey)(o), nil
-	//case C.CKK_RSA:
-	//	return o.rsaPrivateKey()
+		return (*ECDSAPrivateKey)(o), nil
+	case C.CKK_EC_EDWARDS:
+		return (*Ed25519PrivateKey)(o), nil
 	default:
 		return nil, fmt.Errorf("pkcs11: unsupported key type: 0x%08x", kt)
 	}
 }
 
-type ecdsaPrivateKey Object
+type ECDSAPrivateKey Object
 
-func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+func (e *ECDSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	e.slot.mtx.Lock()
 	defer e.slot.mtx.Unlock()
 
@@ -1061,18 +1086,18 @@ func (e *ecdsaPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 	return b.Bytes()
 }
 
-func (e *ecdsaPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
+func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
 	}
-	return &ecdsaKeyPair{
-		ecdsaPrivateKey: e,
-		pub:             ecPub,
+	return &ECDSAKeyPair{
+		ECDSAPrivateKey: e,
+		PublicKey:       ecPub,
 	}, nil
 }
 
-func (e *ecdsaPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
+func (e *ECDSAPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
 	pubObj, err := (*Object)(e).findPublicKey(KeyEC, flags)
 	if err != nil {
 		return nil, err
@@ -1084,19 +1109,83 @@ func (e *ecdsaPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ecdsaKeyPair{
-		ecdsaPrivateKey: e,
-		pub:             pub,
+	return &ECDSAKeyPair{
+		ECDSAPrivateKey: e,
+		PublicKey:       pub,
 	}, nil
 }
 
-type ecdsaKeyPair struct {
-	*ecdsaPrivateKey
-	pub *ecdsa.PublicKey
+type ECDSAKeyPair struct {
+	*ECDSAPrivateKey
+	PublicKey *ecdsa.PublicKey
 }
 
-func (p *ecdsaKeyPair) Public() crypto.PublicKey {
-	return p.pub
+func (p *ECDSAKeyPair) Public() crypto.PublicKey {
+	return p.PublicKey
+}
+
+type Ed25519PrivateKey Object
+
+func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	e.slot.mtx.Lock()
+	defer e.slot.mtx.Unlock()
+
+	m := C.CK_MECHANISM{
+		mechanism: C.CKM_EDDSA,
+	}
+	if err := e.slot.ft.C_SignInit(e.slot.h, &m, e.h); err != nil {
+		return nil, err
+	}
+	var sigLen C.CK_ULONG
+	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+		return nil, err
+	}
+	sig := make([]byte, sigLen)
+	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+		return nil, err
+	}
+	return sig, nil
+}
+
+func (e *Ed25519PrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
+	pubObj, err := (*Object)(e).findPublicKey(KeyEC_Edwards, flags)
+	if err != nil {
+		return nil, err
+	}
+	if pubObj == nil {
+		return nil, ErrPublicKey
+	}
+	pub, err := pubObj.ed25519PublicKey()
+	if err != nil {
+		return nil, err
+	}
+	return &Ed25519KeyPair{
+		Ed25519PrivateKey: e,
+		PublicKey:         pub,
+	}, nil
+}
+
+type Ed25519KeyPair struct {
+	*Ed25519PrivateKey
+	PublicKey ed25519.PublicKey
+}
+
+func (p *Ed25519KeyPair) Public() crypto.PublicKey {
+	return p.PublicKey
+}
+
+func (e *Ed25519PrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
+	edPub, ok := pub.(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
+	}
+	if len(edPub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("pkcs11: invalid ed25519 public key length %d", len(edPub))
+	}
+	return &Ed25519KeyPair{
+		Ed25519PrivateKey: e,
+		PublicKey:         edPub,
+	}, nil
 }
 
 // CertificateType determines the kind of certificate a certificate object holds.
@@ -1107,10 +1196,10 @@ type CertificateType uint
 
 // Certificate types supported by this package.
 const (
-	CertificateX509          = CertificateType(C.CKC_X_509)
-	CertificateX509AttrCert  = CertificateType(C.CKC_X_509_ATTR_CERT)
-	CertificateWTLS          = CertificateType(C.CKC_WTLS)
-	CertificateVendorDefined = CertificateType(C.CKC_VENDOR_DEFINED)
+	CertificateX509          CertificateType = C.CKC_X_509
+	CertificateX509AttrCert  CertificateType = C.CKC_X_509_ATTR_CERT
+	CertificateWTLS          CertificateType = C.CKC_WTLS
+	CertificateVendorDefined CertificateType = C.CKC_VENDOR_DEFINED
 )
 
 func (t CertificateType) String() string {

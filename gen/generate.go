@@ -115,7 +115,7 @@ type tplArg struct {
 
 var cTplSrc = `// GENERATED, DO NOT EDIT.
 
-#include "{{.Hdr}}"
+{{with .Hdr}}#include "{{.}}"{{- end}}
 
 {{range .Funcs}}
 {{.Ret}} {{.Ptr}}_{{.Name}}(
@@ -226,12 +226,14 @@ var goTpl = template.Must(template.New("go_template").Funcs(template.FuncMap{
 func main() {
 	var (
 		hdr   string
+		cHdr  string
 		cOut  string
 		goOut string
 		pkg   string
 	)
 
 	flag.StringVar(&hdr, "i", "", "Input header")
+	flag.StringVar(&cHdr, "h", "", "C header")
 	flag.StringVar(&cOut, "c", "", "C output")
 	flag.StringVar(&goOut, "g", "", "Go output")
 	flag.StringVar(&pkg, "p", "", "Go package")
@@ -259,7 +261,7 @@ func main() {
 		}
 	}
 	args := &tplArg{
-		Hdr:   hdr,
+		Hdr:   cHdr,
 		Pkg:   pkg,
 		CSrc:  cOut,
 		Funcs: funcs,
