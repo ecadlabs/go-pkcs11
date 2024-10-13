@@ -201,11 +201,17 @@ directories.tokendir = %s
 					objs, err := test.slot.Objects()
 					require.NoError(t, err)
 
-					classes := make([]Class, len(objs))
-					for i, o := range objs {
-						classes[i] = o.Class()
+					expect := []struct {
+						class Class
+						label string
+					}{
+						{ClassPublicKey, test.opt.LabelPublic},
+						{ClassPrivateKey, test.opt.LabelPrivate},
 					}
-					assert.Equal(t, []Class{ClassPublicKey, ClassPrivateKey}, classes)
+					for i, o := range objs {
+						assert.Equal(t, expect[i].class, o.Class())
+						assert.Equal(t, expect[i].label, o.Label())
+					}
 				})
 
 				t.Run("Public", func(t *testing.T) {
@@ -253,11 +259,17 @@ directories.tokendir = %s
 			objs, err := edSlot.Objects()
 			require.NoError(t, err)
 
-			classes := make([]Class, len(objs))
-			for i, o := range objs {
-				classes[i] = o.Class()
+			expect := []struct {
+				class Class
+				label string
+			}{
+				{ClassPublicKey, testKeyLabel},
+				{ClassPrivateKey, testKeyLabel},
 			}
-			assert.Equal(t, []Class{ClassPublicKey, ClassPrivateKey}, classes)
+			for i, o := range objs {
+				assert.Equal(t, expect[i].class, o.Class())
+				assert.Equal(t, expect[i].label, o.Label())
+			}
 		})
 
 		t.Run("Public", func(t *testing.T) {
