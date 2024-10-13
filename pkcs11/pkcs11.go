@@ -324,40 +324,40 @@ func (u UserType) String() string {
 }
 
 // OptPIN sets PIN for logging into a slot
-func OptPIN(pin string) SlotOption {
-	return func(o *slotOptions) { o.pin = pin }
+func OptPIN(pin string) SessionOption {
+	return func(o *sessionOptions) { o.pin = pin }
 }
 
 // OptUserPIN is an alias for OptPIN + OptUserType(UserTypeNormal)
-func OptUserPIN(pin string) SlotOption {
-	return func(o *slotOptions) {
+func OptUserPIN(pin string) SessionOption {
+	return func(o *sessionOptions) {
 		o.pin = pin
 		o.userType = UserTypeNormal
 	}
 }
 
 // OptUserPIN is an alias for OptPIN + OptUserType(UserTypeSecurityOfficer)
-func OptSecurityOfficerPIN(pin string) SlotOption {
-	return func(o *slotOptions) {
+func OptSecurityOfficerPIN(pin string) SessionOption {
+	return func(o *sessionOptions) {
 		o.pin = pin
 		o.userType = UserTypeSecurityOfficer
 	}
 }
 
 // OptPIN sets a user type for logging into a slot
-func OptUserType(ut UserType) SlotOption {
-	return func(o *slotOptions) { o.userType = ut }
+func OptUserType(ut UserType) SessionOption {
+	return func(o *sessionOptions) { o.userType = ut }
 }
 
 // OptReadWrite sets a read-write session mode
-func OptReadWrite(o *slotOptions) { o.flags |= C.CKF_RW_SESSION }
+func OptReadWrite(o *sessionOptions) { o.flags |= C.CKF_RW_SESSION }
 
-// Slot creates a session with the given slot, by default read-only. Users
+// NewSession creates a session with the given slot, by default read-only. Users
 // must call Close to release the session.
 //
-// The returned Slot's behavior is undefined once the Module is closed.
-func (m *Module) Slot(id uint, opts ...SlotOption) (*Slot, error) {
-	var so slotOptions
+// The returned NewSession's behavior is undefined once the Module is closed.
+func (m *Module) NewSession(id uint, opts ...SessionOption) (*Session, error) {
+	var so sessionOptions
 	for _, o := range opts {
 		o(&so)
 	}
@@ -375,7 +375,7 @@ func (m *Module) Slot(id uint, opts ...SlotOption) (*Slot, error) {
 		return nil, err
 	}
 
-	s := &Slot{ft: m.ft, h: h, id: id}
+	s := &Session{ft: m.ft, h: h, slotID: id}
 	if so.pin != "" {
 		cPIN := []C.CK_UTF8CHAR(so.pin)
 		if err := s.ft.C_Login(s.h, C.CK_USER_TYPE(so.userType), &cPIN[0], C.CK_ULONG(len(cPIN))); err != nil {
@@ -387,39 +387,39 @@ func (m *Module) Slot(id uint, opts ...SlotOption) (*Slot, error) {
 	return s, nil
 }
 
-// Slot represents a session to a slot.
+// Session represents a session to a slot.
 //
 // A slot holds a listable set of objects, such as certificates and
 // cryptographic keys.
-type Slot struct {
-	id  uint
-	ft  functionTable
-	h   C.CK_SESSION_HANDLE
-	mtx sync.Mutex
+type Session struct {
+	slotID uint
+	ft     functionTable
+	h      C.CK_SESSION_HANDLE
+	mtx    sync.Mutex
 }
 
-type SlotOption func(o *slotOptions)
+type SessionOption func(o *sessionOptions)
 
-type slotOptions struct {
+type sessionOptions struct {
 	pin      string
 	userType UserType
 	flags    C.CK_FLAGS
 }
 
-func (s *Slot) Info() (*SlotInfo, error) {
-	return slotInfo(s.ft, C.CK_SLOT_ID(s.id))
+func (s *Session) SlotInfo() (*SlotInfo, error) {
+	return slotInfo(s.ft, C.CK_SLOT_ID(s.slotID))
 }
 
-func (s *Slot) ID() uint {
-	return uint(s.id)
+func (s *Session) SlotID() uint {
+	return uint(s.slotID)
 }
 
 // Close releases the slot session.
-func (s *Slot) Close() error {
+func (s *Session) Close() error {
 	return s.ft.C_CloseSession(s.h)
 }
 
-func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
+func (s *Session) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 	obj := Object{slot: s, h: o}
 
 	var pinner runtime.Pinner
@@ -478,7 +478,7 @@ func (s *Slot) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 	return &obj, nil
 }
 
-func (s *Slot) NewObject(h uint) (*Object, error) {
+func (s *Session) NewObject(h uint) (*Object, error) {
 	return s.newObject(C.CK_OBJECT_HANDLE(h))
 }
 
@@ -518,8 +518,8 @@ func FilterKeyType(kt KeyType) Filter {
 // Objects searches a slot for objects that match the given options, or all
 // objects if no options are provided.
 //
-// The returned objects behavior is undefined once the Slot object is closed.
-func (s *Slot) Objects(opts ...Filter) (objs []*Object, err error) {
+// The returned objects behavior is undefined once the Session object is closed.
+func (s *Session) Objects(opts ...Filter) (objs []*Object, err error) {
 	var fil filterOpt
 	for _, f := range opts {
 		f(&fil)
@@ -790,7 +790,7 @@ func (k KeyType) String() string {
 // Object represents a single object stored within a slot. For example a key or
 // certificate.
 type Object struct {
-	slot  *Slot
+	slot  *Session
 	h     C.CK_OBJECT_HANDLE
 	class C.CK_OBJECT_CLASS
 	id    []byte

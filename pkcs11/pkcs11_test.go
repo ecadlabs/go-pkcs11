@@ -82,7 +82,7 @@ nBPryTEU4DaFuWh36J5tGuqZFCo9S58dCmajvhAMs2hpw4u6tLCaiaqtUByGnDv9
 6ymrXrM0Nw+Ri1Lz+EMZ71I5uC4BItv+uZNm3XJz+/CDrMw=
 -----END CERTIFICATE-----`
 
-func newSlot(t *testing.T, m *Module) (*Slot, error) {
+func newSlot(t *testing.T, m *Module) (*Session, error) {
 	ids, err := m.SlotIDs()
 	require.NoError(t, err)
 
@@ -96,7 +96,7 @@ func newSlot(t *testing.T, m *Module) (*Slot, error) {
 		return nil, err
 	}
 
-	s, err := m.Slot(id, OptUserPIN(testPIN), OptReadWrite)
+	s, err := m.NewSession(id, OptUserPIN(testPIN), OptReadWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ directories.tokendir = %s
 	})
 
 	ecdsaTests := []*struct {
-		slot *Slot
+		slot *Session
 		name string
 		opt  ecdsaKeyOptions
 	}{

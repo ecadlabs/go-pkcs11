@@ -56,7 +56,7 @@ func (m *Module) createSlot(id uint, opts createSlotOptions) error {
 		return err
 	}
 
-	s, err := m.Slot(id, OptSecurityOfficerPIN(opts.SecurityOfficerPIN), OptReadWrite)
+	s, err := m.NewSession(id, OptSecurityOfficerPIN(opts.SecurityOfficerPIN), OptReadWrite)
 	if err != nil {
 		return fmt.Errorf("getting slot: %w", err)
 	}
@@ -79,7 +79,7 @@ type createCertificateOptions struct {
 }
 
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959709
-func (s *Slot) createX509Certificate(opts createCertificateOptions) (*Object, error) {
+func (s *Session) createX509Certificate(opts createCertificateOptions) (*Object, error) {
 	if opts.X509Certificate == nil {
 		return nil, errors.New("no certificate provided")
 	}
@@ -138,7 +138,7 @@ type ecdsaKeyOptions struct {
 // http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959719
 // https://datatracker.ietf.org/doc/html/rfc5480#section-2.1.1.1
 // http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/os/pkcs11-curr-v2.40-os.html#_Toc416960014
-func (s *Slot) generateECDSA(o *ecdsaKeyOptions) (PrivateKey, error) {
+func (s *Session) generateECDSA(o *ecdsaKeyOptions) (PrivateKey, error) {
 	if o.Curve == nil {
 		return nil, errors.New("no curve provided")
 	}
@@ -239,7 +239,7 @@ type ed25519KeyOptions struct {
 	LabelPrivate string
 }
 
-func (s *Slot) generateEd25519(o *ed25519KeyOptions) (PrivateKey, error) {
+func (s *Session) generateEd25519(o *ed25519KeyOptions) (PrivateKey, error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 
