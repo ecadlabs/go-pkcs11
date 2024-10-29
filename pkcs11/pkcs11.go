@@ -19,25 +19,7 @@ package pkcs11
 //go:generate go run ../gen/generate.go -i generate.h -h platform.h -g generated.go -p pkcs11
 
 /*
-#cgo linux LDFLAGS: -ldl
-
-#include <dlfcn.h>
-
 #include "platform.h"
-
-CK_RV open_library(const char *path, void **module, CK_FUNCTION_LIST_PTR_PTR p) {
-	*module = dlopen(path, RTLD_LAZY);
-	if (*module == NULL) {
-		return (CK_RV)(-1);
-	}
-	CK_C_GetFunctionList getFunctionList = dlsym(*module, "C_GetFunctionList");
-	if (getFunctionList == NULL) {
-		dlclose(*module);
-		*module = NULL;
-		return (CK_RV)(-1);
-	}
-	return getFunctionList(p);
-}
 */
 import "C"
 import (
@@ -62,6 +44,12 @@ import (
 	"golang.org/x/crypto/cryptobyte/asn1"
 )
 
+type dynLibrary interface {
+	close() error
+}
+
+type functionList = C.CK_FUNCTION_LIST
+
 var ErrPublicKey = errors.New("pkcs11: no corresponding public key object found")
 
 // Module represents an opened shared library. By default, this package
@@ -70,7 +58,7 @@ var ErrPublicKey = errors.New("pkcs11: no corresponding public key object found"
 type Module struct {
 	// mod is a pointer to the dlopen handle. Kept around to dlfree
 	// when the Module is closed.
-	mod unsafe.Pointer
+	mod dynLibrary
 	// List of C functions provided by the module.
 	ft   functionTable
 	info ModuleInfo
@@ -78,34 +66,24 @@ type Module struct {
 
 // Open dlopens a shared library by path, initializing the module.
 func Open(path string) (*Module, error) {
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
-
-	var (
-		module unsafe.Pointer
-		funcs  C.CK_FUNCTION_LIST_PTR
-	)
-
-	ret := C.open_library(cPath, &module, &funcs)
-	if ret != C.CKR_OK {
-		if module == nil {
-			return nil, fmt.Errorf("pkcs11: error opening library: %s", C.GoString(C.dlerror()))
-		}
-		return nil, &Error{fnName: "C_GetFunctionList", code: ret}
+	funcs, module, err := openLibrary(path)
+	if err != nil {
+		return nil, err
 	}
+
 	ft := functionTable{t: funcs}
 
 	args := C.CK_C_INITIALIZE_ARGS{
 		flags: C.CKF_OS_LOCKING_OK,
 	}
 	if err := ft.C_Initialize(C.CK_VOID_PTR(unsafe.Pointer(&args))); err != nil {
-		C.dlclose(module)
+		module.close()
 		return nil, err
 	}
 
 	var info C.CK_INFO
 	if err := ft.C_GetInfo(&info); err != nil {
-		C.dlclose(module)
+		module.close()
 		return nil, err
 	}
 
@@ -127,10 +105,7 @@ func (m *Module) Close() error {
 	if err := m.ft.C_Finalize(nil); err != nil {
 		return err
 	}
-	if C.dlclose(m.mod) != 0 {
-		return fmt.Errorf("pkcs11: dlclose error: %s", C.GoString(C.dlerror()))
-	}
-	return nil
+	return m.mod.close()
 }
 
 // SlotIDs returns the IDs of all slots associated with this module, including
