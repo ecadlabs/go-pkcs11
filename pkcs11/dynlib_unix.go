@@ -24,16 +24,17 @@ package pkcs11
 
 #include "platform.h"
 
+#define CKR_DLOPEN (CKR_VENDOR_DEFINED | 1UL)
+#define CKR_DLSYM (CKR_VENDOR_DEFINED | 2UL)
+
 CK_RV open_library(const char *path, void **module, CK_FUNCTION_LIST **p) {
 	*module = dlopen(path, RTLD_LAZY);
 	if (*module == NULL) {
-		return (CK_RV)(-1);
+		return CKR_DLOPEN;
 	}
 	CK_C_GetFunctionList getFunctionList = dlsym(*module, "C_GetFunctionList");
 	if (getFunctionList == NULL) {
-		dlclose(*module);
-		*module = NULL;
-		return (CK_RV)(-1);
+		return CKR_DLSYM;
 	}
 	return getFunctionList(p);
 }
@@ -66,8 +67,14 @@ func openLibrary(path string) (*functionList, dynLibrary, error) {
 
 	ret := C.open_library(cPath, &module, &funcs)
 	if ret != C.CKR_OK {
-		if module == nil {
-			return nil, nil, fmt.Errorf("pkcs11: error opening library: %s", C.GoString(C.dlerror()))
+		if ret == C.CKR_DLOPEN {
+			return nil, nil, fmt.Errorf("pkcs11: error opening library %s: %s", path, C.GoString(C.dlerror()))
+		}
+		if module != nil {
+			C.dlclose(module)
+		}
+		if ret == C.CKR_DLSYM {
+			return nil, nil, fmt.Errorf("pkcs11: can't resolve symbol")
 		}
 		return nil, nil, &Error{fnName: "C_GetFunctionList", code: ret}
 	}
