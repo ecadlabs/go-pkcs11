@@ -64,8 +64,28 @@ type Module struct {
 	info ModuleInfo
 }
 
+type OpenOption func(o *openOptions)
+
+func OptLibraryCantCreateOsThreads(o *openOptions) {
+	if o.args == nil {
+		o.args = new(C.CK_C_INITIALIZE_ARGS)
+	}
+	o.args.flags |= C.CKF_LIBRARY_CANT_CREATE_OS_THREADS
+}
+
+func OptOsLockingOk(o *openOptions) {
+	if o.args == nil {
+		o.args = new(C.CK_C_INITIALIZE_ARGS)
+	}
+	o.args.flags |= C.CKF_OS_LOCKING_OK
+}
+
+type openOptions struct {
+	args *C.CK_C_INITIALIZE_ARGS
+}
+
 // Open dlopens a shared library by path, initializing the module.
-func Open(path string) (*Module, error) {
+func Open(path string, opt ...OpenOption) (*Module, error) {
 	funcs, module, err := openLibrary(path)
 	if err != nil {
 		return nil, err
@@ -73,10 +93,12 @@ func Open(path string) (*Module, error) {
 
 	ft := functionTable{t: funcs}
 
-	args := C.CK_C_INITIALIZE_ARGS{
-		flags: C.CKF_OS_LOCKING_OK,
+	var initOptions openOptions
+	for _, o := range opt {
+		o(&initOptions)
 	}
-	if err := ft.C_Initialize(C.CK_VOID_PTR(unsafe.Pointer(&args))); err != nil {
+
+	if err := ft.C_Initialize(C.CK_VOID_PTR(unsafe.Pointer(initOptions.args))); err != nil {
 		module.close()
 		return nil, err
 	}

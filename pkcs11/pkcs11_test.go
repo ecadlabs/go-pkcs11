@@ -136,7 +136,7 @@ directories.tokendir = %s
 	}
 	t.Setenv("SOFTHSM2_CONF", configPath)
 
-	m, err := Open(path)
+	m, err := Open(path, OptOsLockingOk)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
