@@ -37,6 +37,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -221,7 +222,7 @@ type TokenInfo struct {
 	Label              string
 	Manufacturer       string
 	Model              string
-	SerialNumber       []byte
+	SerialNumber       string
 	Flags              TokenFlags
 	MaxSessionCount    uint
 	SessionCount       uint
@@ -235,7 +236,7 @@ type TokenInfo struct {
 	FreePrivateMemory  uint
 	HardwareVersion    Version
 	FirmwareVersion    Version
-	UTCTime            []byte
+	UTCTime            time.Time
 }
 
 type TokenFlags uint
@@ -306,6 +307,12 @@ func (m *Module) Info() *ModuleInfo {
 	return &m.info
 }
 
+func parseUTCTime(data *[16]C.uchar) time.Time {
+	b := unsafe.Slice((*byte)(&data[0]), len(*data))
+	t, _ := time.Parse("2006010215040500", string(b))
+	return t
+}
+
 func slotInfo(ft functionTable, slotID C.CK_SLOT_ID) (*SlotInfo, error) {
 	var cSlotInfo C.CK_SLOT_INFO
 	if err := ft.C_GetSlotInfo(slotID, &cSlotInfo); err != nil {
@@ -331,7 +338,7 @@ func slotInfo(ft functionTable, slotID C.CK_SLOT_ID) (*SlotInfo, error) {
 		Label:              trimPadding(cTokenInfo.label[:]),
 		Manufacturer:       trimPadding(cTokenInfo.manufacturerID[:]),
 		Model:              trimPadding(cTokenInfo.model[:]),
-		SerialNumber:       unsafe.Slice((*byte)(&cTokenInfo.serialNumber[0]), len(cTokenInfo.serialNumber)),
+		SerialNumber:       trimPadding(cTokenInfo.serialNumber[:]),
 		Flags:              TokenFlags(cTokenInfo.flags),
 		MaxSessionCount:    uint(cTokenInfo.ulMaxSessionCount),
 		SessionCount:       uint(cTokenInfo.ulSessionCount),
@@ -345,7 +352,7 @@ func slotInfo(ft functionTable, slotID C.CK_SLOT_ID) (*SlotInfo, error) {
 		FreePrivateMemory:  uint(cTokenInfo.ulFreePrivateMemory),
 		HardwareVersion:    newVersion(cTokenInfo.hardwareVersion),
 		FirmwareVersion:    newVersion(cTokenInfo.firmwareVersion),
-		UTCTime:            unsafe.Slice((*byte)(&cTokenInfo.utcTime[0]), len(cTokenInfo.utcTime)),
+		UTCTime:            parseUTCTime(&cTokenInfo.utcTime),
 	}
 	return &info, nil
 }
@@ -473,59 +480,22 @@ func (s *Session) Close() error {
 func (s *Session) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 	obj := Object{slot: s, h: o}
 
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-
-	pinner.Pin(&obj.class)
-	attrs := []C.CK_ATTRIBUTE{
-		{
-			_type:      C.CKA_CLASS,
-			pValue:     C.CK_VOID_PTR(&obj.class),
-			ulValueLen: C.CK_ULONG(unsafe.Sizeof(obj.class)),
-		},
-		{
-			_type: C.CKA_ID,
-		},
-		{
-			_type: C.CKA_LABEL,
-		},
-	}
-	if err := s.ft.C_GetAttributeValue(s.h, o, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeValueInvalid) {
+	class := NewScalar[Class](AttributeClass)
+	id := NewArray[[]byte](AttributeID, nil)
+	label := NewArray[String](AttributeLabel, nil)
+	if err := obj.GetAttributes(class, id, label); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
 		return nil, err
 	}
-	if ln := attrs[0].ulValueLen; ln == C.CK_UNAVAILABLE_INFORMATION || ln == 0 {
+	if class.IsNil() {
 		return nil, errors.New("pkcs11: can't get object class")
 	}
-
-	var attrs2 []C.CK_ATTRIBUTE
-	if ln := attrs[1].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION && ln != 0 {
-		// id is available
-		obj.id = make([]byte, ln)
-		pinner.Pin(&obj.id[0])
-		attrs2 = append(attrs2, C.CK_ATTRIBUTE{
-			_type:      C.CKA_ID,
-			pValue:     C.CK_VOID_PTR(&obj.id[0]),
-			ulValueLen: C.CK_ULONG(len(obj.id)),
-		})
+	obj.class = class.Value
+	if !id.IsNil() {
+		obj.id = id.Value
 	}
-	if ln := attrs[2].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION && ln != 0 {
-		// label is available
-		obj.label = make([]byte, ln)
-		pinner.Pin(&obj.label[0])
-		attrs2 = append(attrs2, C.CK_ATTRIBUTE{
-			_type:      C.CKA_LABEL,
-			pValue:     C.CK_VOID_PTR(&obj.label[0]),
-			ulValueLen: C.CK_ULONG(len(obj.label)),
-		})
+	if !label.IsNil() {
+		obj.label = label.Value
 	}
-
-	if len(attrs2) != 0 {
-		// get additional attributes
-		if err := s.ft.C_GetAttributeValue(s.h, o, &attrs2[0], C.CK_ULONG(len(attrs2))); err != nil {
-			return nil, err
-		}
-	}
-
 	return &obj, nil
 }
 
@@ -533,95 +503,32 @@ func (s *Session) NewObject(h uint) (*Object, error) {
 	return s.newObject(C.CK_OBJECT_HANDLE(h))
 }
 
-type filterOpt struct {
-	class *Class
-	label string
-	id    []byte
-	kt    *KeyType
-}
-
-type Filter func(f *filterOpt)
-
-func FilterClass(c Class) Filter {
-	return func(f *filterOpt) {
-		f.class = &c
-	}
-}
-
-func FilterLabel(label string) Filter {
-	return func(f *filterOpt) {
-		f.label = label
-	}
-}
-
-func FilterID(id []byte) Filter {
-	return func(f *filterOpt) {
-		f.id = id
-	}
-}
-
-func FilterKeyType(kt KeyType) Filter {
-	return func(f *filterOpt) {
-		f.kt = &kt
-	}
-}
-
 // Objects searches a slot for objects that match the given options, or all
 // objects if no options are provided.
 //
 // The returned objects behavior is undefined once the Session object is closed.
-func (s *Session) Objects(opts ...Filter) (objs []*Object, err error) {
-	var fil filterOpt
-	for _, f := range opts {
-		f(&fil)
-	}
+func (s *Session) Objects(filter ...Value) (objs []*Object, err error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 
 	var attrs []C.CK_ATTRIBUTE
-	if fil.label != "" {
-		cs := []byte(fil.label)
-		pinner.Pin(&cs[0])
-		attrs = append(attrs, C.CK_ATTRIBUTE{
-			C.CKA_LABEL,
-			C.CK_VOID_PTR(&cs[0]),
-			C.CK_ULONG(len(fil.label)),
-		})
-	}
-
-	if fil.class != nil {
-		objClass := C.CK_OBJECT_CLASS(*fil.class)
-		pinner.Pin(&objClass)
-		attrs = append(attrs, C.CK_ATTRIBUTE{
-			_type:      C.CKA_CLASS,
-			pValue:     C.CK_VOID_PTR(&objClass),
-			ulValueLen: C.CK_ULONG(unsafe.Sizeof(objClass)),
-		})
-	}
-
-	if fil.id != nil {
-		pinner.Pin(&fil.id[0])
-		attrs = append(attrs, C.CK_ATTRIBUTE{
-			_type:      C.CKA_CLASS,
-			pValue:     C.CK_VOID_PTR(&fil.id[0]),
-			ulValueLen: C.CK_ULONG(len(fil.id)),
-		})
-	}
-
-	if fil.kt != nil {
-		kt := C.CK_KEY_TYPE(*fil.kt)
-		pinner.Pin(&kt)
-		attrs = append(attrs, C.CK_ATTRIBUTE{
-			_type:      C.CKA_KEY_TYPE,
-			pValue:     C.CK_VOID_PTR(&kt),
-			ulValueLen: C.CK_ULONG(unsafe.Sizeof(kt)),
-		})
+	if len(filter) != 0 {
+		attrs = make([]C.CK_ATTRIBUTE, len(filter))
+		for i, a := range filter {
+			ptr := a.ptr()
+			pinner.Pin(ptr)
+			attrs[i] = C.CK_ATTRIBUTE{
+				_type:      C.CK_ATTRIBUTE_TYPE(a.Type()),
+				pValue:     C.CK_VOID_PTR(ptr),
+				ulValueLen: C.CK_ULONG(a.len()),
+			}
+		}
 	}
 
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	if len(attrs) > 0 {
+	if attrs != nil {
 		err = s.ft.C_FindObjectsInit(s.h, &attrs[0], C.CK_ULONG(len(attrs)))
 	} else {
 		err = s.ft.C_FindObjectsInit(s.h, nil, 0)
@@ -659,191 +566,12 @@ func (s *Session) Objects(opts ...Filter) (objs []*Object, err error) {
 	return objs, nil
 }
 
-// Class is the primary object type. Such as a certificate, public key, or private key.
-type Class uint
-
-// Set of classes supported by this package.
-const (
-	ClassData             Class = C.CKO_DATA
-	ClassCertificate      Class = C.CKO_CERTIFICATE
-	ClassPublicKey        Class = C.CKO_PUBLIC_KEY
-	ClassPrivateKey       Class = C.CKO_PRIVATE_KEY
-	ClassSecretKey        Class = C.CKO_SECRET_KEY
-	ClassHWFeature        Class = C.CKO_HW_FEATURE
-	ClassDomainParameters Class = C.CKO_DOMAIN_PARAMETERS
-	ClassMechanism        Class = C.CKO_MECHANISM
-	ClassOTPKey           Class = C.CKO_OTP_KEY
-	ClassProfile          Class = C.CKO_PROFILE
-	ClassVendorDefined    Class = C.CKO_VENDOR_DEFINED
-)
-
-var classString = map[Class]string{
-	ClassData:             "CKO_DATA",
-	ClassCertificate:      "CKO_CERTIFICATE",
-	ClassPublicKey:        "CKO_PUBLIC_KEY",
-	ClassPrivateKey:       "CKO_PRIVATE_KEY",
-	ClassSecretKey:        "CKO_SECRET_KEY",
-	ClassHWFeature:        "CKO_HW_FEATURE",
-	ClassDomainParameters: "CKO_DOMAIN_PARAMETERS",
-	ClassMechanism:        "CKO_MECHANISM",
-	ClassOTPKey:           "CKO_OTP_KEY",
-	ClassProfile:          "CKO_PROFILE",
-	ClassVendorDefined:    "CKO_VENDOR_DEFINED",
-}
-
-// String returns a human readable version of the object class.
-func (c Class) String() string {
-	if s, ok := classString[c]; ok {
-		return s
-	}
-	return fmt.Sprintf("Class(0x%08x)", uint(c))
-}
-
-type KeyType uint
-
-const (
-	KeyRSA              KeyType = C.CKK_RSA
-	KeyDSA              KeyType = C.CKK_DSA
-	KeyDH               KeyType = C.CKK_DH
-	KeyEC               KeyType = C.CKK_EC
-	KeyX9_42_DH         KeyType = C.CKK_X9_42_DH
-	KeyKEA              KeyType = C.CKK_KEA
-	KeyGenericSecret    KeyType = C.CKK_GENERIC_SECRET
-	KeyRC2              KeyType = C.CKK_RC2
-	KeyRC4              KeyType = C.CKK_RC4
-	KeyDES              KeyType = C.CKK_DES
-	KeyDES2             KeyType = C.CKK_DES2
-	KeyDES3             KeyType = C.CKK_DES3
-	KeyCAST             KeyType = C.CKK_CAST
-	KeyCAST3            KeyType = C.CKK_CAST3
-	KeyCAST128          KeyType = C.CKK_CAST128
-	KeyRC5              KeyType = C.CKK_RC5
-	KeyIDEA             KeyType = C.CKK_IDEA
-	KeySkipjack         KeyType = C.CKK_SKIPJACK
-	KeyBATON            KeyType = C.CKK_BATON
-	KeyJuniper          KeyType = C.CKK_JUNIPER
-	KeyCDMF             KeyType = C.CKK_CDMF
-	KeyAES              KeyType = C.CKK_AES
-	KeyBlowfish         KeyType = C.CKK_BLOWFISH
-	KeyTwofish          KeyType = C.CKK_TWOFISH
-	KeySecurID          KeyType = C.CKK_SECURID
-	KeyHOTP             KeyType = C.CKK_HOTP
-	KeyACTI             KeyType = C.CKK_ACTI
-	KeyCamellia         KeyType = C.CKK_CAMELLIA
-	KeyARIA             KeyType = C.CKK_ARIA
-	KeyMD5_HMAC         KeyType = C.CKK_MD5_HMAC
-	KeySHA1_HMAC        KeyType = C.CKK_SHA_1_HMAC
-	KeyRIPEMD128_HMAC   KeyType = C.CKK_RIPEMD128_HMAC
-	KeyRIPEMD160_HMAC   KeyType = C.CKK_RIPEMD160_HMAC
-	KeySHA256_HMAC      KeyType = C.CKK_SHA256_HMAC
-	KeySHA384_HMAC      KeyType = C.CKK_SHA384_HMAC
-	KeySHA512_HMAC      KeyType = C.CKK_SHA512_HMAC
-	KeySHA224_HMAC      KeyType = C.CKK_SHA224_HMAC
-	KeySeed             KeyType = C.CKK_SEED
-	KeyGOSTR3410        KeyType = C.CKK_GOSTR3410
-	KeyGOSTR3411        KeyType = C.CKK_GOSTR3411
-	KeyGOST28147        KeyType = C.CKK_GOST28147
-	KeyChaCha20         KeyType = C.CKK_CHACHA20
-	KeyPoly1305         KeyType = C.CKK_POLY1305
-	KeyAES_XTS          KeyType = C.CKK_AES_XTS
-	KeySHA3_224_HMAC    KeyType = C.CKK_SHA3_224_HMAC
-	KeySHA3_256_HMAC    KeyType = C.CKK_SHA3_256_HMAC
-	KeySHA3_384_HMAC    KeyType = C.CKK_SHA3_384_HMAC
-	KeySHA3_512_HMAC    KeyType = C.CKK_SHA3_512_HMAC
-	KeyBLAKE2b_160_HMAC KeyType = C.CKK_BLAKE2B_160_HMAC
-	KeyBLAKE2b_256_HMAC KeyType = C.CKK_BLAKE2B_256_HMAC
-	KeyBLAKE2b_384_HMAC KeyType = C.CKK_BLAKE2B_384_HMAC
-	KeyBLAKE2b_512_HMAC KeyType = C.CKK_BLAKE2B_512_HMAC
-	KeySalsa20          KeyType = C.CKK_SALSA20
-	KeyX2Ratchet        KeyType = C.CKK_X2RATCHET
-	KeyEC_Edwards       KeyType = C.CKK_EC_EDWARDS
-	KeyEC_Montgomery    KeyType = C.CKK_EC_MONTGOMERY
-	KeyHKDF             KeyType = C.CKK_HKDF
-	KeySHA512_224_HMAC  KeyType = C.CKK_SHA512_224_HMAC
-	KeySHA512_256_HMAC  KeyType = C.CKK_SHA512_256_HMAC
-	KeySHA512_T_HMAC    KeyType = C.CKK_SHA512_T_HMAC
-	KeyHSS              KeyType = C.CKK_HSS
-	KeyVendorDefined    KeyType = C.CKK_VENDOR_DEFINED
-)
-
-var ktStr = map[KeyType]string{
-	KeyRSA:              "CKK_RSA",
-	KeyDSA:              "CKK_DSA",
-	KeyDH:               "CKK_DH",
-	KeyEC:               "CKK_EC",
-	KeyX9_42_DH:         "CKK_X9_42_DH",
-	KeyKEA:              "CKK_KEA",
-	KeyGenericSecret:    "CKK_GENERIC_SECRET",
-	KeyRC2:              "CKK_RC2",
-	KeyRC4:              "CKK_RC4",
-	KeyDES:              "CKK_DES",
-	KeyDES2:             "CKK_DES2",
-	KeyDES3:             "CKK_DES3",
-	KeyCAST:             "CKK_CAST",
-	KeyCAST3:            "CKK_CAST3",
-	KeyCAST128:          "CKK_CAST128",
-	KeyRC5:              "CKK_RC5",
-	KeyIDEA:             "CKK_IDEA",
-	KeySkipjack:         "CKK_SKIPJACK",
-	KeyBATON:            "CKK_BATON",
-	KeyJuniper:          "CKK_JUNIPER",
-	KeyCDMF:             "CKK_CDMF",
-	KeyAES:              "CKK_AES",
-	KeyBlowfish:         "CKK_BLOWFISH",
-	KeyTwofish:          "CKK_TWOFISH",
-	KeySecurID:          "CKK_SECURID",
-	KeyHOTP:             "CKK_HOTP",
-	KeyACTI:             "CKK_ACTI",
-	KeyCamellia:         "CKK_CAMELLIA",
-	KeyARIA:             "CKK_ARIA",
-	KeyMD5_HMAC:         "CKK_MD5_HMAC",
-	KeySHA1_HMAC:        "CKK_SHA_1_HMAC",
-	KeyRIPEMD128_HMAC:   "CKK_RIPEMD128_HMAC",
-	KeyRIPEMD160_HMAC:   "CKK_RIPEMD160_HMAC",
-	KeySHA256_HMAC:      "CKK_SHA256_HMAC",
-	KeySHA384_HMAC:      "CKK_SHA384_HMAC",
-	KeySHA512_HMAC:      "CKK_SHA512_HMAC",
-	KeySHA224_HMAC:      "CKK_SHA224_HMAC",
-	KeySeed:             "CKK_SEED",
-	KeyGOSTR3410:        "CKK_GOSTR3410",
-	KeyGOSTR3411:        "CKK_GOSTR3411",
-	KeyGOST28147:        "CKK_GOST28147",
-	KeyChaCha20:         "CKK_CHACHA20",
-	KeyPoly1305:         "CKK_POLY1305",
-	KeyAES_XTS:          "CKK_AES_XTS",
-	KeySHA3_224_HMAC:    "CKK_SHA3_224_HMAC",
-	KeySHA3_256_HMAC:    "CKK_SHA3_256_HMAC",
-	KeySHA3_384_HMAC:    "CKK_SHA3_384_HMAC",
-	KeySHA3_512_HMAC:    "CKK_SHA3_512_HMAC",
-	KeyBLAKE2b_160_HMAC: "CKK_BLAKE2B_160_HMAC",
-	KeyBLAKE2b_256_HMAC: "CKK_BLAKE2B_256_HMAC",
-	KeyBLAKE2b_384_HMAC: "CKK_BLAKE2B_384_HMAC",
-	KeyBLAKE2b_512_HMAC: "CKK_BLAKE2B_512_HMAC",
-	KeySalsa20:          "CKK_SALSA20",
-	KeyX2Ratchet:        "CKK_X2RATCHET",
-	KeyEC_Edwards:       "CKK_EC_EDWARDS",
-	KeyEC_Montgomery:    "CKK_EC_MONTGOMERY",
-	KeyHKDF:             "CKK_HKDF",
-	KeySHA512_224_HMAC:  "CKK_SHA512_224_HMAC",
-	KeySHA512_256_HMAC:  "CKK_SHA512_256_HMAC",
-	KeySHA512_T_HMAC:    "CKK_SHA512_T_HMAC",
-	KeyHSS:              "CKK_HSS",
-	KeyVendorDefined:    "CKK_VENDOR_DEFINED",
-}
-
-func (k KeyType) String() string {
-	if s, ok := ktStr[k]; ok {
-		return s
-	}
-	return fmt.Sprintf("KeyType(0x%08x)", uint(k))
-}
-
 // Object represents a single object stored within a slot. For example a key or
 // certificate.
 type Object struct {
 	slot  *Session
 	h     C.CK_OBJECT_HANDLE
-	class C.CK_OBJECT_CLASS
+	class Class
 	id    []byte
 	label []byte
 }
@@ -851,56 +579,28 @@ type Object struct {
 // Class returns the type of the object stored. For example, certificate, public
 // key, or private key.
 func (o *Object) Class() Class {
-	return Class(o.class)
+	return o.class
 }
 
-type attrType C.CK_ATTRIBUTE_TYPE
-
-func (o *Object) getAttributesBytes(types []attrType) ([][]byte, error) {
-	attrs := make([]C.CK_ATTRIBUTE, len(types))
-	for i, t := range types {
-		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(t)
+func (o *Object) GetAttributes(attributes ...Value) error {
+	attrs := make([]C.CK_ATTRIBUTE, len(attributes))
+	for i, a := range attributes {
+		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type())
 	}
-	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil {
-		return nil, err
+	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
+		return err
 	}
-
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
-
-	out := make([][]byte, len(attrs))
-	for i := range attrs {
-		buf := make([]byte, attrs[i].ulValueLen)
-		pinner.Pin(&buf[0])
-		attrs[i].pValue = C.CK_VOID_PTR(&buf[0])
-		out[i] = buf
+	for i, a := range attributes {
+		if ln := attrs[i].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION {
+			a.allocate(int(ln))
+			ptr := a.ptr()
+			pinner.Pin(ptr)
+			attrs[i].pValue = C.CK_VOID_PTR(ptr)
+		}
 	}
-	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func getAttribute[T any](o *Object, typ C.CK_ATTRIBUTE_TYPE) (T, bool, error) {
-	var (
-		value, nullVal T
-		pinner         runtime.Pinner
-	)
-	pinner.Pin(&value)
-	defer pinner.Unpin()
-	attr := C.CK_ATTRIBUTE{
-		_type:      typ,
-		pValue:     C.CK_VOID_PTR(&value),
-		ulValueLen: C.CK_ULONG(unsafe.Sizeof(value)),
-	}
-	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attr, 1); err != nil {
-		return nullVal, false, err
-	}
-	return value, true, nil
-}
-
-func (o *Object) setAttribute(attrs []C.CK_ATTRIBUTE) error {
-	return o.slot.ft.C_SetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
+	return o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
 }
 
 // Label returns a string value attached to an object, which can be used to
@@ -923,11 +623,11 @@ func (o *Object) Certificate() (*Certificate, error) {
 	if o.Class() != ClassCertificate {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassCertificate, o.Class())
 	}
-	ct, _, err := getAttribute[C.CK_CERTIFICATE_TYPE](o, C.CKA_CERTIFICATE_TYPE)
-	if err != nil {
+	ct := NewScalar[CertificateType](AttributeCertificateType)
+	if err := o.GetAttributes(ct); err != nil {
 		return nil, err
 	}
-	return &Certificate{o, ct}, nil
+	return &Certificate{o, ct.Value}, nil
 }
 
 // PublicKey parses the underlying object as a public key. Both RSA and ECDSA
@@ -939,14 +639,14 @@ func (o *Object) PublicKey() (crypto.PublicKey, error) {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPublicKey, o.Class())
 	}
 
-	kt, _, err := getAttribute[C.CK_KEY_TYPE](o, C.CKA_KEY_TYPE)
-	if err != nil {
+	kt := NewScalar[KeyType](AttributeKeyType)
+	if err := o.GetAttributes(kt); err != nil {
 		return nil, err
 	}
-	switch kt {
-	case C.CKK_EC:
+	switch kt.Value {
+	case KeyEC:
 		return o.ecdsaPublicKey()
-	case C.CKK_EC_EDWARDS:
+	case KeyECEdwards:
 		return o.ed25519PublicKey()
 	default:
 		return nil, fmt.Errorf("unsupported key type: 0x%08x", kt)
@@ -963,13 +663,13 @@ var (
 
 func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398881
-	attrs, err := o.getAttributesBytes([]attrType{C.CKA_EC_PARAMS, C.CKA_EC_POINT})
-	if err != nil {
+	ecParams := NewArray[[]byte](AttributeECParams, nil)
+	ecPoint := NewArray[[]byte](AttributeECPoint, nil)
+	if err := o.GetAttributes(ecParams, ecPoint); err != nil {
 		return nil, err
 	}
 
-	pointBytes := attrs[1]
-	paramBytes := cryptobyte.String(attrs[0])
+	paramBytes := cryptobyte.String(ecParams.Value)
 	var oid asn1enc.ObjectIdentifier
 	if !paramBytes.ReadASN1ObjectIdentifier(&oid) {
 		return nil, errors.New("pkcs11: error reading key OID")
@@ -991,10 +691,10 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 		return nil, errors.New("pkcs11: unsupported curve OID")
 	}
 
-	ptObj := cryptobyte.String(pointBytes)
+	ptObj := cryptobyte.String(ecPoint.Value)
 	var pt cryptobyte.String
 	if !ptObj.ReadASN1(&pt, asn1.OCTET_STRING) {
-		return nil, fmt.Errorf("pkcs11: error decoding ec point: %w", err)
+		return nil, fmt.Errorf("pkcs11: error decoding ec point")
 	}
 	x, y := elliptic.Unmarshal(curve, pt)
 	if x == nil {
@@ -1008,14 +708,14 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 }
 
 func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
-	attrs, err := o.getAttributesBytes([]attrType{C.CKA_EC_POINT})
-	if err != nil {
+	ecPoint := NewArray[[]byte](AttributeECPoint, nil)
+	if err := o.GetAttributes(ecPoint); err != nil {
 		return nil, err
 	}
-	ptObj := cryptobyte.String(attrs[0])
+	ptObj := cryptobyte.String(ecPoint.Value)
 	var pt cryptobyte.String
 	if !ptObj.ReadASN1(&pt, asn1.OCTET_STRING) {
-		return nil, fmt.Errorf("pkcs11: error decoding ec point: %w", err)
+		return nil, fmt.Errorf("pkcs11: error decoding ec point")
 	}
 	if len(pt) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("pkcs11: invalid ed25519 public key length %d", len(pt))
@@ -1024,7 +724,7 @@ func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
 }
 
 func (o *Object) findPublicKey(kt KeyType, flags MatchFlags) (*Object, error) {
-	objects, err := o.slot.Objects(FilterClass(ClassPublicKey), FilterKeyType(kt))
+	objects, err := o.slot.Objects(NewScalarV(AttributeClass, ClassPublicKey), NewScalarV(AttributeKeyType, kt))
 	if err != nil {
 		return nil, err
 	}
@@ -1089,14 +789,14 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPrivateKey, o.Class())
 	}
 
-	kt, _, err := getAttribute[C.CK_KEY_TYPE](o, C.CKA_KEY_TYPE)
-	if err != nil {
+	kt := NewScalar[KeyType](AttributeKeyType)
+	if err := o.GetAttributes(kt); err != nil {
 		return nil, fmt.Errorf("pkcs11: error getting certificate type: %w", err)
 	}
-	switch kt {
-	case C.CKK_EC:
+	switch kt.Value {
+	case KeyEC:
 		return (*ECDSAPrivateKey)(o), nil
-	case C.CKK_EC_EDWARDS:
+	case KeyECEdwards:
 		return (*Ed25519PrivateKey)(o), nil
 	default:
 		return nil, fmt.Errorf("pkcs11: unsupported key type: 0x%08x", kt)
@@ -1199,7 +899,7 @@ func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerO
 }
 
 func (e *Ed25519PrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
-	pubObj, err := (*Object)(e).findPublicKey(KeyEC_Edwards, flags)
+	pubObj, err := (*Object)(e).findPublicKey(KeyECEdwards, flags)
 	if err != nil {
 		return nil, err
 	}
@@ -1239,35 +939,6 @@ func (e *Ed25519PrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 	}, nil
 }
 
-// CertificateType determines the kind of certificate a certificate object holds.
-// This can be X.509, WTLS, GPG, etc.
-//
-// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959709
-type CertificateType uint
-
-// Certificate types supported by this package.
-const (
-	CertificateX509          CertificateType = C.CKC_X_509
-	CertificateX509AttrCert  CertificateType = C.CKC_X_509_ATTR_CERT
-	CertificateWTLS          CertificateType = C.CKC_WTLS
-	CertificateVendorDefined CertificateType = C.CKC_VENDOR_DEFINED
-)
-
-func (t CertificateType) String() string {
-	switch t {
-	case CertificateX509:
-		return "CKC_X_509"
-	case CertificateX509AttrCert:
-		return "CKC_X_509_ATTR_CERT"
-	case CertificateWTLS:
-		return "CKC_WTLS"
-	case CertificateVendorDefined:
-		return "CKC_VENDOR_DEFINED"
-	default:
-		return fmt.Sprintf("CertificateType(0x%08x)", uint(t))
-	}
-}
-
 // Certificate holds a certificate object. Because certificates object can hold
 // various kinds of certificates, callers should check the type before calling
 // methods that parse the certificate.
@@ -1282,7 +953,7 @@ func (t CertificateType) String() string {
 //	x509Cert, err := cert.X509()
 type Certificate struct {
 	o *Object
-	t C.CK_CERTIFICATE_TYPE
+	t CertificateType
 }
 
 // Type returns the format of the underlying certificate.
@@ -1296,15 +967,14 @@ func (c *Certificate) Type() CertificateType {
 // returns an error.
 func (c *Certificate) X509() (*x509.Certificate, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
-	if c.t != C.CKC_X_509 {
+	if c.t != CertificateX509 {
 		return nil, fmt.Errorf("pkcs11: invalid certificate type: %v", CertificateType(c.t))
 	}
-
-	raw, err := c.o.getAttributesBytes([]attrType{C.CKA_VALUE})
-	if err != nil {
+	raw := NewArray[[]byte](AttributeValue, nil)
+	if err := c.o.GetAttributes(raw); err != nil {
 		return nil, err
 	}
-	cert, err := x509.ParseCertificate(raw[0])
+	cert, err := x509.ParseCertificate(raw.Value)
 	if err != nil {
 		return nil, fmt.Errorf("pkcs11: error parsing certificate: %w", err)
 	}

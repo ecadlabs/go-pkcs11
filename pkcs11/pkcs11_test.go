@@ -238,7 +238,7 @@ directories.tokendir = %s
 				})
 
 				t.Run("Public", func(t *testing.T) {
-					objs, err := test.session.Objects(FilterClass(ClassPublicKey))
+					objs, err := test.session.Objects(NewScalarV(AttributeClass, ClassPublicKey))
 					require.NoError(t, err)
 					require.Equal(t, 1, len(objs))
 					obj := objs[0]
@@ -306,7 +306,7 @@ directories.tokendir = %s
 		})
 
 		t.Run("Public", func(t *testing.T) {
-			objs, err := edSession.Objects(FilterClass(ClassPublicKey))
+			objs, err := edSession.Objects(NewScalarV(AttributeClass, ClassPublicKey))
 			require.NoError(t, err)
 			require.Equal(t, 1, len(objs))
 			obj := objs[0]
