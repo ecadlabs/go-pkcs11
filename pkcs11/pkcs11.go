@@ -672,29 +672,10 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 	if err := o.GetAttributes(ecParams, ecPoint); err != nil {
 		return nil, err
 	}
-
-	paramBytes := cryptobyte.String(ecParams.Value)
-	var oid asn1enc.ObjectIdentifier
-	if !paramBytes.ReadASN1ObjectIdentifier(&oid) {
-		return nil, errors.New("pkcs11: error reading key OID")
+	curve, err := ecParamsToCurve(ecParams.Value)
+	if err != nil {
+		return nil, err
 	}
-
-	var curve elliptic.Curve
-	switch {
-	case oid.Equal(oidCurveP224):
-		curve = elliptic.P224()
-	case oid.Equal(oidCurveP256):
-		curve = elliptic.P256()
-	case oid.Equal(oidCurveP384):
-		curve = elliptic.P384()
-	case oid.Equal(oidCurveP521):
-		curve = elliptic.P521()
-	case oid.Equal(oidCurveS256):
-		curve = secp256k1.S256()
-	default:
-		return nil, errors.New("pkcs11: unsupported curve OID")
-	}
-
 	ptObj := cryptobyte.String(ecPoint.Value)
 	var pt cryptobyte.String
 	if !ptObj.ReadASN1(&pt, asn1.OCTET_STRING) {
@@ -709,6 +690,36 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 		X:     x,
 		Y:     y,
 	}, nil
+}
+
+func ecParamsToCurve(data []byte) (elliptic.Curve, error) {
+	paramBytes := cryptobyte.String(data)
+	var oid asn1enc.ObjectIdentifier
+	if !paramBytes.ReadASN1ObjectIdentifier(&oid) {
+		return nil, errors.New("pkcs11: error reading key OID")
+	}
+	curve := oidToCurve(oid)
+	if curve == nil {
+		return nil, errors.New("pkcs11: unsupported curve OID")
+	}
+	return curve, nil
+}
+
+func oidToCurve(oid asn1enc.ObjectIdentifier) elliptic.Curve {
+	switch {
+	case oid.Equal(oidCurveP224):
+		return elliptic.P224()
+	case oid.Equal(oidCurveP256):
+		return elliptic.P256()
+	case oid.Equal(oidCurveP384):
+		return elliptic.P384()
+	case oid.Equal(oidCurveP521):
+		return elliptic.P521()
+	case oid.Equal(oidCurveS256):
+		return secp256k1.S256()
+	default:
+		return nil
+	}
 }
 
 func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
@@ -883,11 +894,30 @@ func (e *ECDSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 	return b.Bytes()
 }
 
+func curveEq(a, b elliptic.Curve) bool {
+	ap, bp := a.Params(), b.Params()
+	return ap.BitSize == bp.BitSize &&
+		ap.P.Cmp(bp.P) == 0 &&
+		ap.N.Cmp(bp.N) == 0 &&
+		ap.B.Cmp(bp.B) == 0 &&
+		ap.Gx.Cmp(bp.Gx) == 0 &&
+		ap.Gy.Cmp(bp.Gy) == 0
+}
+
 func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
 	}
+	curve, err := ecParamsToCurve(e.ecParams)
+	if err != nil {
+		panic(err)
+	}
+
+	if !curveEq(ecPub.Curve, curve) {
+		return nil, fmt.Errorf("pkcs11: mismatched curve type, got %T, expected %T", ecPub.Curve, curve)
+	}
+
 	return &ECDSAKeyPair{
 		ECDSAPrivateKey: e,
 		PublicKey:       ecPub,
