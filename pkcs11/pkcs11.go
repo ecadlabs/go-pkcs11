@@ -23,7 +23,6 @@ package pkcs11
 */
 import "C"
 import (
-	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -52,6 +51,7 @@ type dynLibrary interface {
 type functionList = C.CK_FUNCTION_LIST
 
 var ErrPublicKey = errors.New("pkcs11: no corresponding public key object found")
+var ErrNonUnique = errors.New("pkcs11: non unique public key object")
 
 // Module represents an opened shared library. By default, this package
 // requests locking support from the module, but concurrent safety may
@@ -566,6 +566,33 @@ func (s *Session) Objects(filter ...Value) (objs []*Object, err error) {
 	return objs, nil
 }
 
+func decodeOctetString(src []byte) []byte {
+	x := cryptobyte.String(src)
+	var pt cryptobyte.String
+	if !x.ReadASN1(&pt, asn1.OCTET_STRING) {
+		return nil
+	}
+	return pt
+}
+
+func decodeOID(src []byte) asn1enc.ObjectIdentifier {
+	x := cryptobyte.String(src)
+	var oid asn1enc.ObjectIdentifier
+	if !x.ReadASN1ObjectIdentifier(&oid) {
+		return nil
+	}
+	return oid
+}
+
+func decodePrintable(src []byte) (string, bool) {
+	x := cryptobyte.String(src)
+	var curve cryptobyte.String
+	if !x.ReadASN1(&curve, asn1.PrintableString) {
+		return "", false
+	}
+	return string(curve), true
+}
+
 // Object represents a single object stored within a slot. For example a key or
 // certificate.
 type Object struct {
@@ -672,37 +699,30 @@ func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 	if err := o.GetAttributes(ecParams, ecPoint); err != nil {
 		return nil, err
 	}
-	curve, err := ecParamsToCurve(ecParams.Value)
-	if err != nil {
-		return nil, err
+
+	oid := decodeOID(ecParams.Value)
+	if oid == nil {
+		return nil, errors.New("pkcs11: error decoding curve OID")
 	}
-	ptObj := cryptobyte.String(ecPoint.Value)
-	var pt cryptobyte.String
-	if !ptObj.ReadASN1(&pt, asn1.OCTET_STRING) {
-		return nil, fmt.Errorf("pkcs11: error decoding ec point")
+	curve := oidToCurve(oid)
+	if curve == nil {
+		return nil, fmt.Errorf("pkcs11: unsupported curve %v", oid)
 	}
+
+	pt := decodeOctetString(ecPoint.Value)
+	if pt == nil {
+		return nil, fmt.Errorf("pkcs11: error decoding EC point")
+	}
+
 	x, y := elliptic.Unmarshal(curve, pt)
 	if x == nil {
-		return nil, errors.New("pkcs11: invalid point format")
+		return nil, errors.New("pkcs11: invalid EC point format")
 	}
 	return &ecdsa.PublicKey{
 		Curve: curve,
 		X:     x,
 		Y:     y,
 	}, nil
-}
-
-func ecParamsToCurve(data []byte) (elliptic.Curve, error) {
-	paramBytes := cryptobyte.String(data)
-	var oid asn1enc.ObjectIdentifier
-	if !paramBytes.ReadASN1ObjectIdentifier(&oid) {
-		return nil, errors.New("pkcs11: error reading key OID")
-	}
-	curve := oidToCurve(oid)
-	if curve == nil {
-		return nil, errors.New("pkcs11: unsupported curve OID")
-	}
-	return curve, nil
 }
 
 func oidToCurve(oid asn1enc.ObjectIdentifier) elliptic.Curve {
@@ -723,75 +743,60 @@ func oidToCurve(oid asn1enc.ObjectIdentifier) elliptic.Curve {
 }
 
 func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
+	ecParams := NewArray[[]byte](AttributeECParams, nil)
 	ecPoint := NewArray[[]byte](AttributeECPoint, nil)
-	if err := o.GetAttributes(ecPoint); err != nil {
+	if err := o.GetAttributes(ecParams, ecPoint); err != nil {
 		return nil, err
 	}
-	ptObj := cryptobyte.String(ecPoint.Value)
-	var pt cryptobyte.String
-	if !ptObj.ReadASN1(&pt, asn1.OCTET_STRING) {
-		return nil, fmt.Errorf("pkcs11: error decoding ec point")
+
+	curve, ok := decodePrintable(ecParams.Value)
+	if !ok {
+		return nil, fmt.Errorf("pkcs11: error decoding curve ID")
+	}
+	if curve != ed25519Curve {
+		return nil, fmt.Errorf("pkcs11: unsupported curve %s", string(curve))
+	}
+
+	pt := decodeOctetString(ecPoint.Value)
+	if pt == nil {
+		return nil, fmt.Errorf("pkcs11: error decoding EC point")
 	}
 	if len(pt) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("pkcs11: invalid ed25519 public key length %d", len(pt))
+		return nil, fmt.Errorf("pkcs11: invalid Ed25519 public key length %d", len(pt))
 	}
 	return ed25519.PublicKey(pt), nil
 }
 
-func (o *Object) findAdjacentPublicKey(flags MatchFlags, filter ...Value) (*Object, error) {
-	fl := make([]Value, 0, len(filter)+1)
-	fl = append(fl, NewScalarV(AttributeClass, ClassPublicKey))
-	fl = append(fl, filter...)
+func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilter ...Value) (crypto.PublicKey, error) {
+	if flags&ReuseObject != 0 {
+		pub, err := o.publicKey(kt)
+		if err == nil {
+			return pub, nil
+		} else if !errors.Is(err, ErrAttributeTypeInvalid) {
+			return nil, err
+		}
+	}
+
+	fl := make([]Value, 0, 4+len(optFilter))
+	fl = append(fl, NewScalarV(AttributeClass, ClassPublicKey), NewScalarV(AttributeKeyType, kt))
+	if flags&MatchLabel != 0 && len(o.label) != 0 {
+		fl = append(fl, NewArray(AttributeLabel, o.label))
+	}
+	if flags&MatchID != 0 && len(o.id) != 0 {
+		fl = append(fl, NewArray(AttributeID, o.id))
+	}
+	fl = append(fl, optFilter...)
 
 	objects, err := o.slot.Objects(fl...)
 	if err != nil {
 		return nil, err
 	}
 	if len(objects) == 0 {
-		return nil, nil
+		return nil, ErrPublicKey
+	} else if len(objects) > 1 {
+		return nil, ErrNonUnique
 	}
-	var pubObj *Object
-	if len(objects) == 1 {
-		pubObj = objects[0]
-	} else {
-		if o.id == nil && o.label == nil {
-			return nil, nil
-		}
-		for _, x := range objects {
-			if flags&MatchID != 0 && x.id != nil && bytes.Equal(x.id, o.id) ||
-				flags&MatchLabel != 0 && x.label != nil && bytes.Equal(x.label, o.label) {
-				pubObj = x
-				break
-			}
-		}
-	}
-	return pubObj, nil
-}
-
-func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilter ...Value) (crypto.PublicKey, error) {
-	if flags&ReuseObject == 0 {
-		fl := make([]Value, 0, len(optFilter)+1)
-		fl = append(fl, NewScalarV(AttributeKeyType, kt))
-		fl = append(fl, optFilter...)
-		pubObj, err := o.findAdjacentPublicKey(flags, fl...)
-		if err != nil {
-			return nil, err
-		}
-		if pubObj == nil {
-			return nil, ErrPublicKey
-		}
-		return pubObj.publicKey(kt)
-	} else {
-		pub, err := o.publicKey(kt)
-		if err != nil {
-			if errors.Is(err, ErrAttributeTypeInvalid) {
-				// no EC_POINT attribute
-				return nil, ErrPublicKey
-			}
-			return nil, err
-		}
-		return pub, nil
-	}
+	return objects[0].publicKey(kt)
 }
 
 // KeyPair represents a complete key pair. It implements crypto.Signer and optionally crypto.Decrypter (for RSA)
@@ -837,29 +842,44 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 	}
 
 	kt := NewScalar[KeyType](AttributeKeyType)
-	ecParams := NewArray[[]byte](AttributeECParams, nil)
-	if err := o.GetAttributes(kt, ecParams); err != nil {
-		return nil, fmt.Errorf("pkcs11: error getting certificate type: %w", err)
+	if err := o.GetAttributes(kt); err != nil {
+		return nil, fmt.Errorf("pkcs11: error getting EC params: %w", err)
 	}
+
 	switch kt.Value {
 	case KeyEC:
-		return &ECDSAPrivateKey{
-			o:        o,
-			ecParams: ecParams.Value,
-		}, nil
+		return newECDSAPrivateKey(o)
 	case KeyECEdwards:
-		return &Ed25519PrivateKey{
-			o:        o,
-			ecParams: ecParams.Value,
-		}, nil
+		return newEd25519PrivateKey(o)
 	default:
-		return nil, fmt.Errorf("pkcs11: unsupported key type: 0x%08x", kt)
+		return nil, fmt.Errorf("pkcs11: unsupported key type: %v", kt.Value)
 	}
 }
 
 type ECDSAPrivateKey struct {
-	o        *Object
-	ecParams []byte
+	o   *Object
+	oid asn1enc.ObjectIdentifier
+}
+
+func newECDSAPrivateKey(o *Object) (*ECDSAPrivateKey, error) {
+	ecParams := NewArray[[]byte](AttributeECParams, nil)
+	if err := o.GetAttributes(ecParams); err != nil {
+		return nil, err
+	}
+	oid := decodeOID(ecParams.Value)
+	if oid == nil {
+		return nil, errors.New("pkcs11: error decoding curve OID")
+	}
+	return &ECDSAPrivateKey{
+		o:   o,
+		oid: oid,
+	}, nil
+}
+
+func (e *ECDSAPrivateKey) ecParams() []byte {
+	var b cryptobyte.Builder
+	b.AddASN1ObjectIdentifier(e.oid)
+	return b.BytesOrPanic()
 }
 
 func (e *ECDSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
@@ -909,11 +929,10 @@ func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 	if !ok {
 		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
 	}
-	curve, err := ecParamsToCurve(e.ecParams)
-	if err != nil {
-		panic(err)
+	curve := oidToCurve(e.oid)
+	if curve == nil {
+		return nil, fmt.Errorf("pkcs11: unsupported curve %v", e.oid)
 	}
-
 	if !curveEq(ecPub.Curve, curve) {
 		return nil, fmt.Errorf("pkcs11: mismatched curve type, got %T, expected %T", ecPub.Curve, curve)
 	}
@@ -925,7 +944,7 @@ func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 }
 
 func (e *ECDSAPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
-	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyEC, NewArray(AttributeECParams, e.ecParams))
+	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyEC, NewArray(AttributeECParams, e.ecParams()))
 	if err != nil {
 		return nil, err
 	}
@@ -944,34 +963,57 @@ func (p *ECDSAKeyPair) Public() crypto.PublicKey {
 	return p.PublicKey
 }
 
-type Ed25519PrivateKey struct {
-	o        *Object
-	ecParams []byte
+const ed25519Curve = "edwards25519"
+
+type Ed25519PrivateKey Object
+
+func encodePrintable(src string) []byte {
+	var b cryptobyte.Builder
+	b.AddASN1(asn1.PrintableString, func(child *cryptobyte.Builder) {
+		child.AddBytes([]byte(src))
+	})
+	return b.BytesOrPanic()
+}
+
+func newEd25519PrivateKey(o *Object) (*Ed25519PrivateKey, error) {
+	ecParams := NewArray[[]byte](AttributeECParams, nil)
+	if err := o.GetAttributes(ecParams); err != nil {
+		return nil, err
+	}
+
+	curve, ok := decodePrintable(ecParams.Value)
+	if !ok {
+		return nil, fmt.Errorf("pkcs11: error decoding curve ID")
+	}
+	if curve != ed25519Curve {
+		return nil, fmt.Errorf("pkcs11: unsupported curve %s", string(curve))
+	}
+	return (*Ed25519PrivateKey)(o), nil
 }
 
 func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	e.o.slot.mtx.Lock()
-	defer e.o.slot.mtx.Unlock()
+	e.slot.mtx.Lock()
+	defer e.slot.mtx.Unlock()
 
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_EDDSA,
 	}
-	if err := e.o.slot.ft.C_SignInit(e.o.slot.h, &m, e.o.h); err != nil {
+	if err := e.slot.ft.C_SignInit(e.slot.h, &m, e.h); err != nil {
 		return nil, err
 	}
 	var sigLen C.CK_ULONG
-	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
 		return nil, err
 	}
 	sig := make([]byte, sigLen)
-	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 	return sig, nil
 }
 
 func (e *Ed25519PrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
-	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyECEdwards, NewArray(AttributeECParams, e.ecParams))
+	pub, err := (*Object)(e).publicKeyReuseOrAdjacent(flags, KeyECEdwards, NewArray(AttributeECParams, encodePrintable(ed25519Curve)))
 	if err != nil {
 		return nil, err
 	}
