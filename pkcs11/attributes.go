@@ -14,7 +14,7 @@ import (
 
 type Uint C.CK_ULONG
 
-func (u Uint) String() string { return fmt.Sprintf("%#016x", u) }
+func (u Uint) String() string { return fmt.Sprintf("%#016x", C.CK_ULONG(u)) }
 
 type Bool C.CK_BBOOL
 
