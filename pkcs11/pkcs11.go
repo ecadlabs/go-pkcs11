@@ -643,7 +643,11 @@ func (o *Object) PublicKey() (crypto.PublicKey, error) {
 	if err := o.GetAttributes(kt); err != nil {
 		return nil, err
 	}
-	switch kt.Value {
+	return o.publicKey(kt.Value)
+}
+
+func (o *Object) publicKey(kt KeyType) (crypto.PublicKey, error) {
+	switch kt {
 	case KeyEC:
 		return o.ecdsaPublicKey()
 	case KeyECEdwards:
@@ -723,8 +727,12 @@ func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(pt), nil
 }
 
-func (o *Object) findPublicKey(kt KeyType, flags MatchFlags) (*Object, error) {
-	objects, err := o.slot.Objects(NewScalarV(AttributeClass, ClassPublicKey), NewScalarV(AttributeKeyType, kt))
+func (o *Object) findAdjacentPublicKey(flags MatchFlags, filter ...Value) (*Object, error) {
+	fl := make([]Value, 0, len(filter)+1)
+	fl = append(fl, NewScalarV(AttributeClass, ClassPublicKey))
+	fl = append(fl, filter...)
+
+	objects, err := o.slot.Objects(fl...)
 	if err != nil {
 		return nil, err
 	}
@@ -749,6 +757,32 @@ func (o *Object) findPublicKey(kt KeyType, flags MatchFlags) (*Object, error) {
 	return pubObj, nil
 }
 
+func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilter ...Value) (crypto.PublicKey, error) {
+	if flags&ReuseObject == 0 {
+		fl := make([]Value, 0, len(optFilter)+1)
+		fl = append(fl, NewScalarV(AttributeKeyType, kt))
+		fl = append(fl, optFilter...)
+		pubObj, err := o.findAdjacentPublicKey(flags, fl...)
+		if err != nil {
+			return nil, err
+		}
+		if pubObj == nil {
+			return nil, ErrPublicKey
+		}
+		return pubObj.publicKey(kt)
+	} else {
+		pub, err := o.publicKey(kt)
+		if err != nil {
+			if errors.Is(err, ErrAttributeTypeInvalid) {
+				// no EC_POINT attribute
+				return nil, ErrPublicKey
+			}
+			return nil, err
+		}
+		return pub, nil
+	}
+}
+
 // KeyPair represents a complete key pair. It implements crypto.Signer and optionally crypto.Decrypter (for RSA)
 type KeyPair interface {
 	crypto.Signer
@@ -760,6 +794,8 @@ type MatchFlags uint
 const (
 	MatchLabel MatchFlags = 1 << iota
 	MatchID
+	// ReuseObject makes KeyPair to read public key value from the private key object. It's present in some implementations
+	ReuseObject
 )
 
 // PrivateKey is a private key object without a corresponding public key. It implements Signer and optionally Decrypter
@@ -790,38 +826,48 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 	}
 
 	kt := NewScalar[KeyType](AttributeKeyType)
-	if err := o.GetAttributes(kt); err != nil {
+	ecParams := NewArray[[]byte](AttributeECParams, nil)
+	if err := o.GetAttributes(kt, ecParams); err != nil {
 		return nil, fmt.Errorf("pkcs11: error getting certificate type: %w", err)
 	}
 	switch kt.Value {
 	case KeyEC:
-		return (*ECDSAPrivateKey)(o), nil
+		return &ECDSAPrivateKey{
+			o:        o,
+			ecParams: ecParams.Value,
+		}, nil
 	case KeyECEdwards:
-		return (*Ed25519PrivateKey)(o), nil
+		return &Ed25519PrivateKey{
+			o:        o,
+			ecParams: ecParams.Value,
+		}, nil
 	default:
 		return nil, fmt.Errorf("pkcs11: unsupported key type: 0x%08x", kt)
 	}
 }
 
-type ECDSAPrivateKey Object
+type ECDSAPrivateKey struct {
+	o        *Object
+	ecParams []byte
+}
 
 func (e *ECDSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	e.slot.mtx.Lock()
-	defer e.slot.mtx.Unlock()
+	e.o.slot.mtx.Lock()
+	defer e.o.slot.mtx.Unlock()
 
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398884
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_ECDSA,
 	}
-	if err := e.slot.ft.C_SignInit(e.slot.h, &m, e.h); err != nil {
+	if err := e.o.slot.ft.C_SignInit(e.o.slot.h, &m, e.o.h); err != nil {
 		return nil, err
 	}
 	var sigLen C.CK_ULONG
-	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
 		return nil, err
 	}
 	sig := make([]byte, sigLen)
-	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 
@@ -849,20 +895,13 @@ func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 }
 
 func (e *ECDSAPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
-	pubObj, err := (*Object)(e).findPublicKey(KeyEC, flags)
-	if err != nil {
-		return nil, err
-	}
-	if pubObj == nil {
-		return nil, ErrPublicKey
-	}
-	pub, err := pubObj.ecdsaPublicKey()
+	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyEC, NewArray(AttributeECParams, e.ecParams))
 	if err != nil {
 		return nil, err
 	}
 	return &ECDSAKeyPair{
 		ECDSAPrivateKey: e,
-		PublicKey:       pub,
+		PublicKey:       pub.(*ecdsa.PublicKey),
 	}, nil
 }
 
@@ -875,44 +914,40 @@ func (p *ECDSAKeyPair) Public() crypto.PublicKey {
 	return p.PublicKey
 }
 
-type Ed25519PrivateKey Object
+type Ed25519PrivateKey struct {
+	o        *Object
+	ecParams []byte
+}
 
 func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	e.slot.mtx.Lock()
-	defer e.slot.mtx.Unlock()
+	e.o.slot.mtx.Lock()
+	defer e.o.slot.mtx.Unlock()
 
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_EDDSA,
 	}
-	if err := e.slot.ft.C_SignInit(e.slot.h, &m, e.h); err != nil {
+	if err := e.o.slot.ft.C_SignInit(e.o.slot.h, &m, e.o.h); err != nil {
 		return nil, err
 	}
 	var sigLen C.CK_ULONG
-	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
 		return nil, err
 	}
 	sig := make([]byte, sigLen)
-	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 	return sig, nil
 }
 
 func (e *Ed25519PrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
-	pubObj, err := (*Object)(e).findPublicKey(KeyECEdwards, flags)
-	if err != nil {
-		return nil, err
-	}
-	if pubObj == nil {
-		return nil, ErrPublicKey
-	}
-	pub, err := pubObj.ed25519PublicKey()
+	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyECEdwards, NewArray(AttributeECParams, e.ecParams))
 	if err != nil {
 		return nil, err
 	}
 	return &Ed25519KeyPair{
 		Ed25519PrivateKey: e,
-		PublicKey:         pub,
+		PublicKey:         pub.(ed25519.PublicKey),
 	}, nil
 }
 
