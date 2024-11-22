@@ -24,4 +24,4 @@ go.work.sum
 # env file
 .env
 
-/cmd/pkcs11-token-dump/pkcs11-token-dump
+/cmd/pkcs11-dump-token/pkcs11-dump-token
