@@ -768,7 +768,7 @@ func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
 }
 
 func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilter ...Value) (crypto.PublicKey, error) {
-	if flags&ReuseObject != 0 {
+	if flags&ExtendedPrivate != 0 {
 		pub, err := o.publicKey(kt)
 		if err == nil {
 			return pub, nil
@@ -810,8 +810,8 @@ type MatchFlags uint
 const (
 	MatchLabel MatchFlags = 1 << iota
 	MatchID
-	// ReuseObject makes KeyPair to read public key value from the private key object. It's present in some implementations
-	ReuseObject
+	// ExtendedPrivate makes KeyPair to read public key value from the private key object. It's present in some implementations
+	ExtendedPrivate
 )
 
 // PrivateKey is a private key object without a corresponding public key. It implements Signer and optionally Decrypter
@@ -822,6 +822,7 @@ type PrivateKey interface {
 	// it returns one with the matching ID if the latter is present
 	KeyPair(flags MatchFlags) (KeyPair, error)
 	AddPublic(pub crypto.PublicKey) (KeyPair, error)
+	Handle() uint
 }
 
 type Signer interface {
@@ -875,6 +876,8 @@ func newECDSAPrivateKey(o *Object) (*ECDSAPrivateKey, error) {
 		oid: oid,
 	}, nil
 }
+
+func (e *ECDSAPrivateKey) Handle() uint { return e.o.Handle() }
 
 func (e *ECDSAPrivateKey) ecParams() []byte {
 	var b cryptobyte.Builder
@@ -991,6 +994,8 @@ func newEd25519PrivateKey(o *Object) (*Ed25519PrivateKey, error) {
 	return (*Ed25519PrivateKey)(o), nil
 }
 
+func (e *Ed25519PrivateKey) Handle() uint { return (*Object)(e).Handle() }
+
 func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	e.slot.mtx.Lock()
 	defer e.slot.mtx.Unlock()
@@ -1067,6 +1072,8 @@ type Certificate struct {
 func (c *Certificate) Type() CertificateType {
 	return CertificateType(c.t)
 }
+
+func (c *Certificate) Handle() uint { return c.o.Handle() }
 
 // X509 parses the underlying certificate as an X.509 certificate.
 //

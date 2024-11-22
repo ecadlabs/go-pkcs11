@@ -509,9 +509,16 @@ func (t *Array[T, E]) ptr() unsafe.Pointer {
 
 var _ Value = (*Array[[]C.ulong, C.ulong])(nil)
 
-type BytesAttribute[T ~[]byte] struct {
-	Value T
-	typ   AttributeType
+type StringValue = Array[String, byte]
+
+func NewString(typ AttributeType, src string) *StringValue {
+	return NewArray(typ, String(src))
+}
+
+type BytesValue = Array[Bytes, byte]
+
+func NewBytes(typ AttributeType, src []byte) *BytesValue {
+	return NewArray(typ, Bytes(src))
 }
 
 // Class is the primary object type. Such as a certificate, public key, or private key.
