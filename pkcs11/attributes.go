@@ -309,11 +309,15 @@ func (a AttributeType) String() string {
 type Value interface {
 	String() string
 	IsNil() bool
-	Type() AttributeType
 
 	allocate(size int)
 	len() int
 	ptr() unsafe.Pointer
+}
+
+type TypeValue struct {
+	Type  AttributeType
+	Value Value
 }
 
 const (
@@ -417,49 +421,51 @@ var attrDataType = map[AttributeType]int{
 func NewValue(t AttributeType) Value {
 	switch t {
 	case AttributeClass:
-		return NewScalar[Class](t)
+		return NewScalar[Class]()
 	case AttributeKeyType:
-		return NewScalar[KeyType](t)
+		return NewScalar[KeyType]()
 	case AttributeCertificateType:
-		return NewScalar[CertificateType](t)
+		return NewScalar[CertificateType]()
 	case AttributeMechanismType, AttributeNameHashAlgorithm, AttributeKeyGenMechanism:
-		return NewScalar[MechanismType](t)
+		return NewScalar[MechanismType]()
 	case AttributeAllowedMechanisms:
-		return NewArray[[]MechanismType](t, nil)
+		return NewArray[[]MechanismType](nil)
 	case AttributeWrapTemplate, AttributeUnwrapTemplate, AttributeDeriveTemplate:
-		return NewArray[[]Attribute](t, nil)
+		return NewArray[[]Attribute](nil)
 	default:
 		if dt, ok := attrDataType[t]; ok {
 			switch dt {
 			case attrUint:
-				return NewScalar[Uint](t)
+				return NewScalar[Uint]()
 			case attrBool:
-				return NewScalar[Bool](t)
+				return NewScalar[Bool]()
 			case attrDate:
-				return NewScalar[Date](t)
+				return NewScalar[Date]()
 			case attrBigInt:
-				return NewArray[BigInt](t, nil)
+				return NewArray[BigInt](nil)
 			case attrString:
-				return NewArray[String](t, nil)
+				return NewArray[String](nil)
 			}
 		}
-		return NewArray[Bytes](t, nil)
+		return NewArray[Bytes](nil)
 	}
+}
+
+func NewTypeValue(t AttributeType) TypeValue {
+	return TypeValue{t, NewValue(t)}
 }
 
 type Scalar[T any] struct {
 	Value T
-
-	typ   AttributeType
 	valid bool
 }
 
-func NewScalarV[T any](typ AttributeType, val T) *Scalar[T] {
-	return &Scalar[T]{val, typ, true}
+func NewScalarV[T any](val T) *Scalar[T] {
+	return &Scalar[T]{val, true}
 }
 
-func NewScalar[T any](typ AttributeType) *Scalar[T] {
-	return &Scalar[T]{typ: typ}
+func NewScalar[T any]() *Scalar[T] {
+	return new(Scalar[T])
 }
 
 func (t *Scalar[T]) String() string {
@@ -470,7 +476,6 @@ func (t *Scalar[T]) String() string {
 }
 
 func (t *Scalar[T]) IsNil() bool         { return !t.valid }
-func (t *Scalar[T]) Type() AttributeType { return t.typ }
 func (t *Scalar[T]) allocate(size int)   { t.valid = true }
 func (t *Scalar[T]) len() int            { return int(unsafe.Sizeof(t.Value)) }
 func (t *Scalar[T]) ptr() unsafe.Pointer { return unsafe.Pointer(&t.Value) }
@@ -479,11 +484,10 @@ var _ Value = (*Scalar[C.ulong])(nil)
 
 type Array[T ~[]E, E any] struct {
 	Value T
-	typ   AttributeType
 }
 
-func NewArray[T ~[]E, E any](typ AttributeType, val T) *Array[T, E] {
-	return &Array[T, E]{val, typ}
+func NewArray[T ~[]E, E any](val T) *Array[T, E] {
+	return &Array[T, E]{val}
 }
 
 func (t *Array[T, E]) String() string {
@@ -492,8 +496,7 @@ func (t *Array[T, E]) String() string {
 	}
 	return fmt.Sprintf("%v", t.Value)
 }
-func (t *Array[T, E]) IsNil() bool         { return t.Value == nil }
-func (t *Array[T, E]) Type() AttributeType { return t.typ }
+func (t *Array[T, E]) IsNil() bool { return t.Value == nil }
 func (t *Array[T, E]) allocate(size int) {
 	t.Value = make(T, size/int(unsafe.Sizeof(t.Value[0])))
 }
@@ -511,14 +514,14 @@ var _ Value = (*Array[[]C.ulong, C.ulong])(nil)
 
 type StringValue = Array[String, byte]
 
-func NewString(typ AttributeType, src string) *StringValue {
-	return NewArray(typ, String(src))
+func NewString(src string) *StringValue {
+	return NewArray(String(src))
 }
 
 type BytesValue = Array[Bytes, byte]
 
-func NewBytes(typ AttributeType, src []byte) *BytesValue {
-	return NewArray(typ, Bytes(src))
+func NewBytes(src []byte) *BytesValue {
+	return NewArray(Bytes(src))
 }
 
 // Class is the primary object type. Such as a certificate, public key, or private key.
@@ -1637,49 +1640,49 @@ func (m MechanismType) String() string {
 
 type Attribute C.CK_ATTRIBUTE
 
-func (a *Attribute) Value() Value {
+func (a *Attribute) TypeValue() TypeValue {
 	t := AttributeType(a._type)
 	switch t {
 	case AttributeClass:
-		return &Scalar[Class]{Value: *(*Class)(unsafe.Pointer(a.pValue)), typ: t, valid: true}
+		return TypeValue{t, &Scalar[Class]{Value: *(*Class)(unsafe.Pointer(a.pValue)), valid: true}}
 
 	case AttributeKeyType:
-		return &Scalar[KeyType]{Value: *(*KeyType)(unsafe.Pointer(a.pValue)), typ: t, valid: true}
+		return TypeValue{t, &Scalar[KeyType]{Value: *(*KeyType)(unsafe.Pointer(a.pValue)), valid: true}}
 
 	case AttributeCertificateType:
-		return &Scalar[CertificateType]{Value: *(*CertificateType)(unsafe.Pointer(a.pValue)), typ: t, valid: true}
+		return TypeValue{t, &Scalar[CertificateType]{Value: *(*CertificateType)(unsafe.Pointer(a.pValue)), valid: true}}
 
 	case AttributeMechanismType, AttributeNameHashAlgorithm, AttributeKeyGenMechanism:
-		return &Scalar[MechanismType]{Value: *(*MechanismType)(unsafe.Pointer(a.pValue)), typ: t, valid: true}
+		return TypeValue{t, &Scalar[MechanismType]{Value: *(*MechanismType)(unsafe.Pointer(a.pValue)), valid: true}}
 
 	case AttributeAllowedMechanisms:
 		ptr := (*MechanismType)(unsafe.Pointer(a.pValue))
-		return &Array[[]MechanismType, MechanismType]{Value: unsafe.Slice(ptr, int(a.ulValueLen)/int(unsafe.Sizeof(*ptr))), typ: t}
+		return TypeValue{t, &Array[[]MechanismType, MechanismType]{Value: unsafe.Slice(ptr, int(a.ulValueLen)/int(unsafe.Sizeof(*ptr)))}}
 
 	case AttributeWrapTemplate, AttributeUnwrapTemplate, AttributeDeriveTemplate:
 		ptr := (*Attribute)(unsafe.Pointer(a.pValue))
-		return &Array[[]Attribute, Attribute]{Value: unsafe.Slice(ptr, int(a.ulValueLen)/int(unsafe.Sizeof(*ptr))), typ: t}
+		return TypeValue{t, &Array[[]Attribute, Attribute]{Value: unsafe.Slice(ptr, int(a.ulValueLen)/int(unsafe.Sizeof(*ptr)))}}
 
 	default:
 		if dt, ok := attrDataType[t]; ok {
 			switch dt {
 			case attrUint:
-				return &Scalar[Uint]{Value: *(*Uint)(unsafe.Pointer(a.pValue)), typ: t, valid: true}
+				return TypeValue{t, &Scalar[Uint]{Value: *(*Uint)(unsafe.Pointer(a.pValue)), valid: true}}
 			case attrBool:
-				return &Scalar[Bool]{Value: *(*Bool)(unsafe.Pointer(a.pValue)), typ: t, valid: true}
+				return TypeValue{t, &Scalar[Bool]{Value: *(*Bool)(unsafe.Pointer(a.pValue)), valid: true}}
 			case attrDate:
-				return &Scalar[Date]{Value: *(*Date)(unsafe.Pointer(a.pValue)), typ: t, valid: true}
+				return TypeValue{t, &Scalar[Date]{Value: *(*Date)(unsafe.Pointer(a.pValue)), valid: true}}
 			case attrBigInt:
 				ptr := (*byte)(unsafe.Pointer(a.pValue))
-				return &Array[BigInt, byte]{Value: unsafe.Slice(ptr, int(a.ulValueLen)), typ: t}
+				return TypeValue{t, &Array[BigInt, byte]{Value: unsafe.Slice(ptr, int(a.ulValueLen))}}
 			case attrString:
 				ptr := (*byte)(unsafe.Pointer(a.pValue))
-				return &Array[String, byte]{Value: unsafe.Slice(ptr, int(a.ulValueLen)), typ: t}
+				return TypeValue{t, &Array[String, byte]{Value: unsafe.Slice(ptr, int(a.ulValueLen))}}
 			}
 		}
 		ptr := (*byte)(unsafe.Pointer(a.pValue))
-		return &Array[Bytes, byte]{Value: unsafe.Slice(ptr, int(a.ulValueLen)), typ: t}
+		return TypeValue{t, &Array[Bytes, byte]{Value: unsafe.Slice(ptr, int(a.ulValueLen))}}
 	}
 }
 
-func (a *Attribute) String() string { return a.Value().String() }
+func (a *Attribute) String() string { return a.TypeValue().Value.String() }

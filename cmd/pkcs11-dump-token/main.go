@@ -247,18 +247,18 @@ func main() {
 	for _, obj := range objects {
 		fmt.Printf("Object(%#016x):\n", obj.Handle())
 
-		values := make([]pkcs11.Value, len(allAttrs))
+		values := make([]pkcs11.TypeValue, len(allAttrs))
 		for i, a := range allAttrs {
-			values[i] = pkcs11.NewValue(a)
+			values[i] = pkcs11.NewTypeValue(a)
 		}
 		if err := obj.GetAttributes(values...); err != nil && !errors.Is(err, pkcs11.ErrAttributeTypeInvalid) && !errors.Is(err, pkcs11.ErrAttributeSensitive) {
 			log.Fatal(err)
 		}
 		for _, v := range values {
-			if v.IsNil() {
+			if v.Value.IsNil() {
 				continue
 			}
-			fmt.Printf("\t%v: %v\n", v.Type(), v)
+			fmt.Printf("\t%v: %v\n", v.Type, v)
 		}
 		fmt.Printf("\n")
 	}

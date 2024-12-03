@@ -480,10 +480,14 @@ func (s *Session) Close() error {
 func (s *Session) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 	obj := Object{slot: s, h: o}
 
-	class := NewScalar[Class](AttributeClass)
-	id := NewArray[[]byte](AttributeID, nil)
-	label := NewArray[String](AttributeLabel, nil)
-	if err := obj.GetAttributes(class, id, label); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
+	class := NewScalar[Class]()
+	id := NewArray[[]byte](nil)
+	label := NewArray[String](nil)
+	if err := obj.GetAttributes(
+		TypeValue{AttributeClass, class},
+		TypeValue{AttributeID, id},
+		TypeValue{AttributeLabel, label},
+	); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
 		return nil, err
 	}
 	if class.IsNil() {
@@ -507,7 +511,7 @@ func (s *Session) NewObject(h uint) (*Object, error) {
 // objects if no options are provided.
 //
 // The returned objects behavior is undefined once the Session object is closed.
-func (s *Session) Objects(filter ...Value) (objs []*Object, err error) {
+func (s *Session) Objects(filter ...TypeValue) (objs []*Object, err error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 
@@ -515,12 +519,12 @@ func (s *Session) Objects(filter ...Value) (objs []*Object, err error) {
 	if len(filter) != 0 {
 		attrs = make([]C.CK_ATTRIBUTE, len(filter))
 		for i, a := range filter {
-			ptr := a.ptr()
+			ptr := a.Value.ptr()
 			pinner.Pin(ptr)
 			attrs[i] = C.CK_ATTRIBUTE{
-				_type:      C.CK_ATTRIBUTE_TYPE(a.Type()),
+				_type:      C.CK_ATTRIBUTE_TYPE(a.Type),
 				pValue:     C.CK_VOID_PTR(ptr),
-				ulValueLen: C.CK_ULONG(a.len()),
+				ulValueLen: C.CK_ULONG(a.Value.len()),
 			}
 		}
 	}
@@ -609,10 +613,10 @@ func (o *Object) Class() Class {
 	return o.class
 }
 
-func (o *Object) GetAttributes(attributes ...Value) error {
+func (o *Object) GetAttributes(attributes ...TypeValue) error {
 	attrs := make([]C.CK_ATTRIBUTE, len(attributes))
 	for i, a := range attributes {
-		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type())
+		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type)
 	}
 	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
 		return err
@@ -621,13 +625,17 @@ func (o *Object) GetAttributes(attributes ...Value) error {
 	defer pinner.Unpin()
 	for i, a := range attributes {
 		if ln := attrs[i].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION {
-			a.allocate(int(ln))
-			ptr := a.ptr()
+			a.Value.allocate(int(ln))
+			ptr := a.Value.ptr()
 			pinner.Pin(ptr)
 			attrs[i].pValue = C.CK_VOID_PTR(ptr)
 		}
 	}
 	return o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
+}
+
+func (o *Object) GetAttribute(typ AttributeType, val Value) error {
+	return o.GetAttributes(TypeValue{Type: typ, Value: val})
 }
 
 // Label returns a string value attached to an object, which can be used to
@@ -650,8 +658,8 @@ func (o *Object) Certificate() (*Certificate, error) {
 	if o.Class() != ClassCertificate {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassCertificate, o.Class())
 	}
-	ct := NewScalar[CertificateType](AttributeCertificateType)
-	if err := o.GetAttributes(ct); err != nil {
+	ct := NewScalar[CertificateType]()
+	if err := o.GetAttribute(AttributeCertificateType, ct); err != nil {
 		return nil, err
 	}
 	return &Certificate{o, ct.Value}, nil
@@ -666,8 +674,8 @@ func (o *Object) PublicKey() (crypto.PublicKey, error) {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPublicKey, o.Class())
 	}
 
-	kt := NewScalar[KeyType](AttributeKeyType)
-	if err := o.GetAttributes(kt); err != nil {
+	kt := NewScalar[KeyType]()
+	if err := o.GetAttribute(AttributeKeyType, kt); err != nil {
 		return nil, err
 	}
 	return o.publicKey(kt.Value)
@@ -694,9 +702,9 @@ var (
 
 func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398881
-	ecParams := NewArray[[]byte](AttributeECParams, nil)
-	ecPoint := NewArray[[]byte](AttributeECPoint, nil)
-	if err := o.GetAttributes(ecParams, ecPoint); err != nil {
+	ecParams := NewArray[[]byte](nil)
+	ecPoint := NewArray[[]byte](nil)
+	if err := o.GetAttributes(TypeValue{AttributeECParams, ecParams}, TypeValue{AttributeECPoint, ecPoint}); err != nil {
 		return nil, err
 	}
 
@@ -743,9 +751,9 @@ func oidToCurve(oid asn1enc.ObjectIdentifier) elliptic.Curve {
 }
 
 func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
-	ecParams := NewArray[[]byte](AttributeECParams, nil)
-	ecPoint := NewArray[[]byte](AttributeECPoint, nil)
-	if err := o.GetAttributes(ecParams, ecPoint); err != nil {
+	ecParams := NewArray[[]byte](nil)
+	ecPoint := NewArray[[]byte](nil)
+	if err := o.GetAttributes(TypeValue{AttributeECParams, ecParams}, TypeValue{AttributeECPoint, ecPoint}); err != nil {
 		return nil, err
 	}
 
@@ -767,7 +775,7 @@ func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(pt), nil
 }
 
-func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilter ...Value) (crypto.PublicKey, error) {
+func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilter ...TypeValue) (crypto.PublicKey, error) {
 	if flags&ExtendedPrivate != 0 {
 		pub, err := o.publicKey(kt)
 		if err == nil {
@@ -777,13 +785,13 @@ func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilte
 		}
 	}
 
-	fl := make([]Value, 0, 4+len(optFilter))
-	fl = append(fl, NewScalarV(AttributeClass, ClassPublicKey), NewScalarV(AttributeKeyType, kt))
+	fl := make([]TypeValue, 0, 4+len(optFilter))
+	fl = append(fl, TypeValue{AttributeClass, NewScalarV(ClassPublicKey)}, TypeValue{AttributeKeyType, NewScalarV(kt)})
 	if flags&MatchLabel != 0 && len(o.label) != 0 {
-		fl = append(fl, NewArray(AttributeLabel, o.label))
+		fl = append(fl, TypeValue{AttributeLabel, NewArray(o.label)})
 	}
 	if flags&MatchID != 0 && len(o.id) != 0 {
-		fl = append(fl, NewArray(AttributeID, o.id))
+		fl = append(fl, TypeValue{AttributeID, NewArray(o.id)})
 	}
 	fl = append(fl, optFilter...)
 
@@ -842,8 +850,8 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPrivateKey, o.Class())
 	}
 
-	kt := NewScalar[KeyType](AttributeKeyType)
-	if err := o.GetAttributes(kt); err != nil {
+	kt := NewScalar[KeyType]()
+	if err := o.GetAttribute(AttributeKeyType, kt); err != nil {
 		return nil, fmt.Errorf("pkcs11: error getting EC params: %w", err)
 	}
 
@@ -863,8 +871,8 @@ type ECDSAPrivateKey struct {
 }
 
 func newECDSAPrivateKey(o *Object) (*ECDSAPrivateKey, error) {
-	ecParams := NewArray[[]byte](AttributeECParams, nil)
-	if err := o.GetAttributes(ecParams); err != nil {
+	ecParams := NewArray[[]byte](nil)
+	if err := o.GetAttribute(AttributeECParams, ecParams); err != nil {
 		return nil, err
 	}
 	oid := decodeOID(ecParams.Value)
@@ -947,7 +955,7 @@ func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 }
 
 func (e *ECDSAPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
-	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyEC, NewArray(AttributeECParams, e.ecParams()))
+	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyEC, TypeValue{AttributeECParams, NewArray(e.ecParams())})
 	if err != nil {
 		return nil, err
 	}
@@ -979,8 +987,8 @@ func encodePrintable(src string) []byte {
 }
 
 func newEd25519PrivateKey(o *Object) (*Ed25519PrivateKey, error) {
-	ecParams := NewArray[[]byte](AttributeECParams, nil)
-	if err := o.GetAttributes(ecParams); err != nil {
+	ecParams := NewArray[[]byte](nil)
+	if err := o.GetAttribute(AttributeECParams, ecParams); err != nil {
 		return nil, err
 	}
 
@@ -1018,7 +1026,7 @@ func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerO
 }
 
 func (e *Ed25519PrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
-	pub, err := (*Object)(e).publicKeyReuseOrAdjacent(flags, KeyECEdwards, NewArray(AttributeECParams, encodePrintable(ed25519Curve)))
+	pub, err := (*Object)(e).publicKeyReuseOrAdjacent(flags, KeyECEdwards, TypeValue{AttributeECParams, NewArray(encodePrintable(ed25519Curve))})
 	if err != nil {
 		return nil, err
 	}
@@ -1084,8 +1092,8 @@ func (c *Certificate) X509() (*x509.Certificate, error) {
 	if c.t != CertificateX509 {
 		return nil, fmt.Errorf("pkcs11: invalid certificate type: %v", CertificateType(c.t))
 	}
-	raw := NewArray[[]byte](AttributeValue, nil)
-	if err := c.o.GetAttributes(raw); err != nil {
+	raw := NewArray[[]byte](nil)
+	if err := c.o.GetAttribute(AttributeValue, raw); err != nil {
 		return nil, err
 	}
 	cert, err := x509.ParseCertificate(raw.Value)
