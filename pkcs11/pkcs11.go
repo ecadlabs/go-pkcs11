@@ -27,6 +27,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/rsa"
+	"crypto/subtle"
 	"crypto/x509"
 	asn1enc "encoding/asn1"
 	"errors"
@@ -669,7 +671,7 @@ func (o *Object) Certificate() (*Certificate, error) {
 // keys are supported.
 //
 // If the object isn't a public key, this method fails.
-func (o *Object) PublicKey() (crypto.PublicKey, error) {
+func (o *Object) PublicKey() (PublicKey, error) {
 	if o.Class() != ClassPublicKey {
 		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPublicKey, o.Class())
 	}
@@ -681,12 +683,14 @@ func (o *Object) PublicKey() (crypto.PublicKey, error) {
 	return o.publicKey(kt.Value)
 }
 
-func (o *Object) publicKey(kt KeyType) (crypto.PublicKey, error) {
+func (o *Object) publicKey(kt KeyType) (PublicKey, error) {
 	switch kt {
 	case KeyEC:
-		return o.ecdsaPublicKey()
+		return newECDSAPublicKey(o)
 	case KeyECEdwards:
-		return o.ed25519PublicKey()
+		return newEd25519PublicKey(o)
+	case KeyRSA:
+		return newRSAPrivateKey(o)
 	default:
 		return nil, fmt.Errorf("unsupported key type: 0x%08x", kt)
 	}
@@ -699,39 +703,6 @@ var (
 	oidCurveP521 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 35}
 	oidCurveS256 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 10} // http://www.secg.org/sec2-v2.pdf
 )
-
-func (o *Object) ecdsaPublicKey() (*ecdsa.PublicKey, error) {
-	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398881
-	ecParams := NewArray[[]byte](nil)
-	ecPoint := NewArray[[]byte](nil)
-	if err := o.GetAttributes(TypeValue{AttributeECParams, ecParams}, TypeValue{AttributeECPoint, ecPoint}); err != nil {
-		return nil, err
-	}
-
-	oid := decodeOID(ecParams.Value)
-	if oid == nil {
-		return nil, errors.New("pkcs11: error decoding curve OID")
-	}
-	curve := oidToCurve(oid)
-	if curve == nil {
-		return nil, fmt.Errorf("pkcs11: unsupported curve %v", oid)
-	}
-
-	pt := decodeOctetString(ecPoint.Value)
-	if pt == nil {
-		return nil, fmt.Errorf("pkcs11: error decoding EC point")
-	}
-
-	x, y := elliptic.Unmarshal(curve, pt)
-	if x == nil {
-		return nil, errors.New("pkcs11: invalid EC point format")
-	}
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     x,
-		Y:     y,
-	}, nil
-}
 
 func oidToCurve(oid asn1enc.ObjectIdentifier) elliptic.Curve {
 	switch {
@@ -748,31 +719,6 @@ func oidToCurve(oid asn1enc.ObjectIdentifier) elliptic.Curve {
 	default:
 		return nil
 	}
-}
-
-func (o *Object) ed25519PublicKey() (ed25519.PublicKey, error) {
-	ecParams := NewArray[[]byte](nil)
-	ecPoint := NewArray[[]byte](nil)
-	if err := o.GetAttributes(TypeValue{AttributeECParams, ecParams}, TypeValue{AttributeECPoint, ecPoint}); err != nil {
-		return nil, err
-	}
-
-	curve, ok := decodePrintable(ecParams.Value)
-	if !ok {
-		return nil, fmt.Errorf("pkcs11: error decoding curve ID")
-	}
-	if curve != ed25519Curve {
-		return nil, fmt.Errorf("pkcs11: unsupported curve %s", string(curve))
-	}
-
-	pt := decodeOctetString(ecPoint.Value)
-	if pt == nil {
-		return nil, fmt.Errorf("pkcs11: error decoding EC point")
-	}
-	if len(pt) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("pkcs11: invalid Ed25519 public key length %d", len(pt))
-	}
-	return ed25519.PublicKey(pt), nil
 }
 
 func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilter ...TypeValue) (crypto.PublicKey, error) {
@@ -807,10 +753,34 @@ func (o *Object) publicKeyReuseOrAdjacent(flags MatchFlags, kt KeyType, optFilte
 	return objects[0].publicKey(kt)
 }
 
+func (o *Object) signWithMechanism(m *C.CK_MECHANISM, digest []byte) ([]byte, error) {
+	o.slot.mtx.Lock()
+	defer o.slot.mtx.Unlock()
+
+	if err := o.slot.ft.C_SignInit(o.slot.h, m, o.h); err != nil {
+		return nil, err
+	}
+	var sigLen C.CK_ULONG
+	if err := o.slot.ft.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+		return nil, err
+	}
+	sig := make([]byte, sigLen)
+	if err := o.slot.ft.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+		return nil, err
+	}
+	return sig, nil
+}
+
+type PublicKey interface {
+	Object() *Object
+	Public() crypto.PublicKey // Public returns stdlib compatible public key
+}
+
 // KeyPair represents a complete key pair. It implements crypto.Signer and optionally crypto.Decrypter (for RSA)
 type KeyPair interface {
-	crypto.Signer
-	Public() crypto.PublicKey
+	Signer
+	Private() PrivateKey
+	Public() crypto.PublicKey // KeyPair does not necessary contain an in-token public key
 }
 
 type MatchFlags uint
@@ -826,11 +796,11 @@ const (
 // interfaces (for RSA) but not crypto.Signer and crypto.Decrypter
 type PrivateKey interface {
 	Signer
-	// KeyPair finds an adjacent public key in the same slot. If there is more than one public key found then
+	// MakeKeyPair finds an adjacent public key in the same slot. If there is more than one public key found then
 	// it returns one with the matching ID if the latter is present
-	KeyPair(flags MatchFlags) (KeyPair, error)
-	AddPublic(pub crypto.PublicKey) (KeyPair, error)
-	Handle() uint
+	MakeKeyPair(flags MatchFlags) (KeyPair, error)
+	MakeKeyPairWith(pub crypto.PublicKey) (KeyPair, error)
+	Object() *Object
 }
 
 type Signer interface {
@@ -860,6 +830,8 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 		return newECDSAPrivateKey(o)
 	case KeyECEdwards:
 		return newEd25519PrivateKey(o)
+	case KeyRSA:
+		return newRSAPrivateKey(o)
 	default:
 		return nil, fmt.Errorf("pkcs11: unsupported key type: %v", kt.Value)
 	}
@@ -885,7 +857,11 @@ func newECDSAPrivateKey(o *Object) (*ECDSAPrivateKey, error) {
 	}, nil
 }
 
-func (e *ECDSAPrivateKey) Handle() uint { return e.o.Handle() }
+func (e *ECDSAPrivateKey) Object() *Object               { return e.o }
+func (e *ECDSAPrivateKey) OID() asn1enc.ObjectIdentifier { return e.oid }
+
+// Curve returns nil if the private key has unknown OID
+func (e *ECDSAPrivateKey) Curve() elliptic.Curve { return oidToCurve(e.oid) }
 
 func (e *ECDSAPrivateKey) ecParams() []byte {
 	var b cryptobyte.Builder
@@ -894,25 +870,15 @@ func (e *ECDSAPrivateKey) ecParams() []byte {
 }
 
 func (e *ECDSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	e.o.slot.mtx.Lock()
-	defer e.o.slot.mtx.Unlock()
-
 	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398884
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_ECDSA,
 	}
-	if err := e.o.slot.ft.C_SignInit(e.o.slot.h, &m, e.o.h); err != nil {
-		return nil, err
-	}
-	var sigLen C.CK_ULONG
-	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
-		return nil, err
-	}
-	sig := make([]byte, sigLen)
-	if err := e.o.slot.ft.C_Sign(e.o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
-		return nil, err
-	}
 
+	sig, err := e.o.signWithMechanism(&m, digest)
+	if err != nil {
+		return nil, err
+	}
 	r := new(big.Int).SetBytes(sig[:len(sig)/2])
 	s := new(big.Int).SetBytes(sig[len(sig)/2:])
 
@@ -935,7 +901,7 @@ func curveEq(a, b elliptic.Curve) bool {
 		ap.Gy.Cmp(bp.Gy) == 0
 }
 
-func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
+func (e *ECDSAPrivateKey) MakeKeyPairWith(pub crypto.PublicKey) (KeyPair, error) {
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
@@ -954,16 +920,60 @@ func (e *ECDSAPrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
 	}, nil
 }
 
-func (e *ECDSAPrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
+func (e *ECDSAPrivateKey) MakeKeyPair(flags MatchFlags) (KeyPair, error) {
 	pub, err := e.o.publicKeyReuseOrAdjacent(flags, KeyEC, TypeValue{AttributeECParams, NewArray(e.ecParams())})
 	if err != nil {
 		return nil, err
 	}
 	return &ECDSAKeyPair{
 		ECDSAPrivateKey: e,
-		PublicKey:       pub.(*ecdsa.PublicKey),
+		PublicKey:       &pub.(*ECDSAPublicKey).PublicKey,
 	}, nil
 }
+
+type ECDSAPublicKey struct {
+	ecdsa.PublicKey
+	o *Object
+}
+
+func newECDSAPublicKey(o *Object) (*ECDSAPublicKey, error) {
+	// http://docs.oasis-open.org/pkcs11/pkcs11-curr/v2.40/cs01/pkcs11-curr-v2.40-cs01.html#_Toc399398881
+	ecParams := NewArray[[]byte](nil)
+	ecPoint := NewArray[[]byte](nil)
+	if err := o.GetAttributes(TypeValue{AttributeECParams, ecParams}, TypeValue{AttributeECPoint, ecPoint}); err != nil {
+		return nil, err
+	}
+
+	oid := decodeOID(ecParams.Value)
+	if oid == nil {
+		return nil, errors.New("pkcs11: error decoding curve OID")
+	}
+	curve := oidToCurve(oid)
+	if curve == nil {
+		return nil, fmt.Errorf("pkcs11: unsupported curve %v", oid)
+	}
+
+	pt := decodeOctetString(ecPoint.Value)
+	if pt == nil {
+		return nil, fmt.Errorf("pkcs11: error decoding EC point")
+	}
+
+	x, y := elliptic.Unmarshal(curve, pt)
+	if x == nil {
+		return nil, errors.New("pkcs11: invalid EC point format")
+	}
+	return &ECDSAPublicKey{
+		PublicKey: ecdsa.PublicKey{
+			Curve: curve,
+			X:     x,
+			Y:     y,
+		},
+		o: o,
+	}, nil
+}
+
+func (k *ECDSAPublicKey) Object() *Object          { return k.o }
+func (k *ECDSAPublicKey) Public() crypto.PublicKey { return k.PublicKey }
 
 type ECDSAKeyPair struct {
 	*ECDSAPrivateKey
@@ -972,6 +982,10 @@ type ECDSAKeyPair struct {
 
 func (p *ECDSAKeyPair) Public() crypto.PublicKey {
 	return p.PublicKey
+}
+
+func (p *ECDSAKeyPair) Private() PrivateKey {
+	return p.ECDSAPrivateKey
 }
 
 const ed25519Curve = "edwards25519"
@@ -1002,50 +1016,72 @@ func newEd25519PrivateKey(o *Object) (*Ed25519PrivateKey, error) {
 	return (*Ed25519PrivateKey)(o), nil
 }
 
-func (e *Ed25519PrivateKey) Handle() uint { return (*Object)(e).Handle() }
+func (e *Ed25519PrivateKey) Object() *Object { return (*Object)(e) }
 
 func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	e.slot.mtx.Lock()
-	defer e.slot.mtx.Unlock()
-
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_EDDSA,
 	}
-	if err := e.slot.ft.C_SignInit(e.slot.h, &m, e.h); err != nil {
-		return nil, err
-	}
-	var sigLen C.CK_ULONG
-	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
-		return nil, err
-	}
-	sig := make([]byte, sigLen)
-	if err := e.slot.ft.C_Sign(e.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
-		return nil, err
-	}
-	return sig, nil
+	return (*Object)(e).signWithMechanism(&m, digest)
 }
 
-func (e *Ed25519PrivateKey) KeyPair(flags MatchFlags) (KeyPair, error) {
+func (e *Ed25519PrivateKey) MakeKeyPair(flags MatchFlags) (KeyPair, error) {
 	pub, err := (*Object)(e).publicKeyReuseOrAdjacent(flags, KeyECEdwards, TypeValue{AttributeECParams, NewArray(encodePrintable(ed25519Curve))})
 	if err != nil {
 		return nil, err
 	}
 	return &Ed25519KeyPair{
 		Ed25519PrivateKey: e,
-		PublicKey:         pub.(ed25519.PublicKey),
+		PublicKey:         pub.(*Ed25519PublicKey).PublicKey,
 	}, nil
 }
+
+type Ed25519PublicKey struct {
+	ed25519.PublicKey
+	o *Object
+}
+
+func newEd25519PublicKey(o *Object) (*Ed25519PublicKey, error) {
+	ecParams := NewArray[[]byte](nil)
+	ecPoint := NewArray[[]byte](nil)
+	if err := o.GetAttributes(TypeValue{AttributeECParams, ecParams}, TypeValue{AttributeECPoint, ecPoint}); err != nil {
+		return nil, err
+	}
+
+	curve, ok := decodePrintable(ecParams.Value)
+	if !ok {
+		return nil, fmt.Errorf("pkcs11: error decoding curve ID")
+	}
+	if curve != ed25519Curve {
+		return nil, fmt.Errorf("pkcs11: unsupported curve %s", string(curve))
+	}
+
+	pt := decodeOctetString(ecPoint.Value)
+	if pt == nil {
+		return nil, fmt.Errorf("pkcs11: error decoding EC point")
+	}
+	if len(pt) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("pkcs11: invalid Ed25519 public key length %d", len(pt))
+	}
+
+	return &Ed25519PublicKey{
+		PublicKey: ed25519.PublicKey(pt),
+		o:         o,
+	}, nil
+}
+
+func (e *Ed25519PublicKey) Object() *Object          { return e.o }
+func (e *Ed25519PublicKey) Public() crypto.PublicKey { return e.PublicKey }
 
 type Ed25519KeyPair struct {
 	*Ed25519PrivateKey
 	PublicKey ed25519.PublicKey
 }
 
-func (p *Ed25519KeyPair) Public() crypto.PublicKey {
-	return p.PublicKey
-}
+func (p *Ed25519KeyPair) Public() crypto.PublicKey { return p.PublicKey }
+func (p *Ed25519KeyPair) Private() PrivateKey      { return p.Ed25519PrivateKey }
 
-func (e *Ed25519PrivateKey) AddPublic(pub crypto.PublicKey) (KeyPair, error) {
+func (e *Ed25519PrivateKey) MakeKeyPairWith(pub crypto.PublicKey) (KeyPair, error) {
 	edPub, ok := pub.(ed25519.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
@@ -1081,7 +1117,7 @@ func (c *Certificate) Type() CertificateType {
 	return CertificateType(c.t)
 }
 
-func (c *Certificate) Handle() uint { return c.o.Handle() }
+func (c *Certificate) Object() *Object { return c.o }
 
 // X509 parses the underlying certificate as an X.509 certificate.
 //
@@ -1102,3 +1138,97 @@ func (c *Certificate) X509() (*x509.Certificate, error) {
 	}
 	return cert, nil
 }
+
+type RSAPrivateKey struct {
+	rsa.PublicKey
+	o *Object
+}
+
+func (r *RSAPrivateKey) Object() *Object          { return r.o }
+func (r *RSAPrivateKey) Private() PrivateKey      { return r }           // implement KeyPair directly
+func (r *RSAPrivateKey) Public() crypto.PublicKey { return r.PublicKey } // implement KeyPair directly
+
+func (r *RSAPrivateKey) MakeKeyPairWith(pub crypto.PublicKey) (KeyPair, error) {
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("pkcs11: invalid public key type %T", pub)
+	}
+	// just do sanity check
+	if subtle.ConstantTimeCompare(r.PublicKey.N.Bytes(), rsaPub.N.Bytes()) != 1 || r.PublicKey.E != rsaPub.E {
+		return nil, errors.New("pkcs11: public key value does not match")
+	}
+	return r, nil
+}
+
+func hashMechanism(h crypto.Hash) (C.CK_MECHANISM_TYPE, C.CK_RSA_PKCS_MGF_TYPE, error) {
+	switch h {
+	case crypto.SHA1:
+		return C.CKM_SHA_1, C.CKG_MGF1_SHA1, nil
+	case crypto.SHA224:
+		return C.CKM_SHA224, C.CKG_MGF1_SHA224, nil
+	case crypto.SHA256:
+		return C.CKM_SHA256, C.CKG_MGF1_SHA256, nil
+	case crypto.SHA384:
+		return C.CKM_SHA384, C.CKG_MGF1_SHA384, nil
+	case crypto.SHA512:
+		return C.CKM_SHA512, C.CKG_MGF1_SHA512, nil
+	case crypto.SHA3_224:
+		return C.CKM_SHA3_224, C.CKG_MGF1_SHA3_224, nil
+	case crypto.SHA3_256:
+		return C.CKM_SHA3_256, C.CKG_MGF1_SHA3_256, nil
+	case crypto.SHA3_384:
+		return C.CKM_SHA3_384, C.CKG_MGF1_SHA3_384, nil
+	case crypto.SHA3_512:
+		return C.CKM_SHA3_512, C.CKG_MGF1_SHA3_512, nil
+	default:
+		return 0, 0, fmt.Errorf("pkcs11: unknown hash function %v", h)
+	}
+}
+
+func (r *RSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	var m C.CK_MECHANISM
+	if pssOpts, ok := opts.(*rsa.PSSOptions); ok {
+		params := C.CK_RSA_PKCS_PSS_PARAMS{
+			sLen: C.CK_ULONG(pssOpts.SaltLength),
+		}
+		var err error
+		params.hashAlg, params.mgf, err = hashMechanism(pssOpts.Hash)
+		if err != nil {
+			return nil, err
+		}
+		var pinner runtime.Pinner
+		defer pinner.Unpin()
+		pptr := unsafe.Pointer(&params)
+		pinner.Pin(pptr)
+
+		m.mechanism = C.CKM_RSA_PKCS_PSS
+		m.pParameter = C.CK_VOID_PTR(pptr)
+	} else {
+		m.mechanism = C.CKM_RSA_PKCS
+	}
+	return r.o.signWithMechanism(&m, digest)
+}
+
+func (r *RSAPrivateKey) MakeKeyPair(flags MatchFlags) (KeyPair, error) {
+	return r, nil
+}
+
+func newRSAPrivateKey(o *Object) (*RSAPrivateKey, error) {
+	mod := NewArray[[]byte](nil)
+	exp := NewArray[[]byte](nil)
+	if err := o.GetAttributes(TypeValue{AttributeModulus, mod}, TypeValue{AttributePublicExponent, exp}); err != nil {
+		return nil, err
+	}
+	return &RSAPrivateKey{
+		PublicKey: rsa.PublicKey{
+			N: new(big.Int).SetBytes(mod.Value),
+			E: int(new(big.Int).SetBytes(exp.Value).Int64()),
+		},
+		o: o,
+	}, nil
+}
+
+type RSAPublicKey RSAPrivateKey
+
+func (r *RSAPublicKey) Object() *Object          { return r.o }
+func (r *RSAPublicKey) Public() crypto.PublicKey { return r.PublicKey }

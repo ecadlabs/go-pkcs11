@@ -245,22 +245,20 @@ directories.tokendir = %s
 					pub, err := obj.PublicKey()
 					require.NoError(t, err)
 
-					_, ok := pub.(*ecdsa.PublicKey)
+					_, ok := pub.(*ECDSAPublicKey)
 					require.True(t, ok, "unexpected key type %T", pub)
 				})
 
 				t.Run("Sign", func(t *testing.T) {
-					kp, err := priv.KeyPair(MatchID | MatchLabel)
+					kp, err := priv.MakeKeyPair(MatchID | MatchLabel)
 					require.NoError(t, err)
 
-					signer, ok := kp.(crypto.Signer)
-					require.True(t, ok, "unexpected key type %T", kp)
-					pub, ok := signer.Public().(*ecdsa.PublicKey)
-					require.True(t, ok, "unexpected key type %T", signer.Public())
+					pub, ok := kp.Public().(*ecdsa.PublicKey)
+					require.True(t, ok, "unexpected key type %T", kp.Public())
 
 					digest := sha256.Sum256([]byte("test"))
 
-					sig, err := signer.Sign(rand.Reader, digest[:], nil)
+					sig, err := kp.Sign(rand.Reader, digest[:], nil)
 					require.NoError(t, err)
 					require.True(t, ecdsa.VerifyASN1(pub, digest[:], sig))
 				})
@@ -313,13 +311,13 @@ directories.tokendir = %s
 			pub, err := obj.PublicKey()
 			require.NoError(t, err)
 
-			pub, ok := pub.(ed25519.PublicKey)
-			require.True(t, ok, "unexpected key type %T", pub)
-			require.Len(t, pub, ed25519.PublicKeySize)
+			pub2, ok := pub.(*Ed25519PublicKey)
+			require.True(t, ok, "unexpected key type %T", pub2)
+			require.Len(t, pub2.PublicKey, ed25519.PublicKeySize)
 		})
 
 		t.Run("Sign", func(t *testing.T) {
-			kp, err := priv.KeyPair(MatchID | MatchLabel)
+			kp, err := priv.MakeKeyPair(MatchID | MatchLabel)
 			require.NoError(t, err)
 
 			signer, ok := kp.(crypto.Signer)
