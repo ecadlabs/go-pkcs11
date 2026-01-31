@@ -18,7 +18,6 @@
 package pkcs11
 
 import (
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -250,15 +249,15 @@ directories.tokendir = %s
 				})
 
 				t.Run("Sign", func(t *testing.T) {
-					kp, err := priv.MakeKeyPair(MatchID | MatchLabel)
+					p, err := FindMatchingPublicKey(priv, MatchID|MatchLabel)
 					require.NoError(t, err)
 
-					pub, ok := kp.Public().(*ecdsa.PublicKey)
-					require.True(t, ok, "unexpected key type %T", kp.Public())
+					pub, ok := p.Public().(*ecdsa.PublicKey)
+					require.True(t, ok, "unexpected key type %T", p.Public())
 
 					digest := sha256.Sum256([]byte("test"))
 
-					sig, err := kp.Sign(rand.Reader, digest[:], nil)
+					sig, err := priv.Sign(rand.Reader, digest[:], nil)
 					require.NoError(t, err)
 					require.True(t, ecdsa.VerifyASN1(pub, digest[:], sig))
 				})
@@ -317,17 +316,15 @@ directories.tokendir = %s
 		})
 
 		t.Run("Sign", func(t *testing.T) {
-			kp, err := priv.MakeKeyPair(MatchID | MatchLabel)
+			p, err := FindMatchingPublicKey(priv, MatchID|MatchLabel)
 			require.NoError(t, err)
 
-			signer, ok := kp.(crypto.Signer)
-			require.True(t, ok, "unexpected key type %T", kp)
-			pub, ok := signer.Public().(ed25519.PublicKey)
-			require.True(t, ok, "unexpected key type %T", signer.Public())
+			pub, ok := p.Public().(ed25519.PublicKey)
+			require.True(t, ok, "unexpected key type %T", p.Public())
 
 			digest := sha256.Sum256([]byte("test"))
 
-			sig, err := signer.Sign(rand.Reader, digest[:], nil)
+			sig, err := priv.Sign(rand.Reader, digest[:], nil)
 			require.NoError(t, err)
 			require.True(t, ed25519.Verify(pub, digest[:], sig))
 		})
