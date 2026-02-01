@@ -18,12 +18,13 @@
 package pkcs11
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -32,7 +33,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -158,42 +158,64 @@ directories.tokendir = %s
 		require.Equal(t, TokenRNG|TokenLoginRequired|TokenRestoreKeyNotNeeded|TokenSOPinLocked|TokenSOPinToBeChanged, info.Token.Flags)
 	}
 
+	type keyPairOptions struct {
+		Public  KeyOptions
+		Private KeyOptions
+	}
+
 	ecdsaTests := []*struct {
 		session *Session
 		name    string
-		opt     ecdsaKeyOptions
+		opt     keyPairOptions
+		curve   asn1.ObjectIdentifier
 	}{
 		{
 			name: "P256",
-			opt: ecdsaKeyOptions{
-				Curve:        elliptic.P256(),
-				LabelPublic:  testKeyLabel,
-				LabelPrivate: testKeyLabel,
+			opt: keyPairOptions{
+				Public: KeyOptions{
+					Label: testKeyLabel,
+				},
+				Private: KeyOptions{
+					Label: testKeyLabel,
+				},
 			},
+			curve: CurveP256,
 		},
 		{
 			name: "P384",
-			opt: ecdsaKeyOptions{
-				Curve:        elliptic.P384(),
-				LabelPublic:  testKeyLabel,
-				LabelPrivate: testKeyLabel,
+			opt: keyPairOptions{
+				Public: KeyOptions{
+					Label: testKeyLabel,
+				},
+				Private: KeyOptions{
+					Label: testKeyLabel,
+				},
 			},
+			curve: CurveP384,
 		},
 		{
 			name: "P521",
-			opt: ecdsaKeyOptions{
-				Curve:        elliptic.P521(),
-				LabelPublic:  testKeyLabel,
-				LabelPrivate: testKeyLabel,
+			opt: keyPairOptions{
+				Public: KeyOptions{
+					Label: testKeyLabel,
+				},
+				Private: KeyOptions{
+					Label: testKeyLabel,
+				},
 			},
+			curve: CurveP521,
 		},
 		{
 			name: "S256",
-			opt: ecdsaKeyOptions{
-				Curve:        secp256k1.S256(),
-				LabelPublic:  testKeyLabel,
-				LabelPrivate: testKeyLabel,
+			opt: keyPairOptions{
+				Public: KeyOptions{
+					Label: testKeyLabel,
+				},
+				Private: KeyOptions{
+					Label: testKeyLabel,
+				},
 			},
+			curve: CurveS256,
 		},
 	}
 
@@ -206,7 +228,7 @@ directories.tokendir = %s
 	t.Run("ECDSA", func(t *testing.T) {
 		for _, test := range ecdsaTests {
 			t.Run(test.name, func(t *testing.T) {
-				priv, err := test.session.generateECDSA(&test.opt)
+				_, priv, err := test.session.GenerateECDSAKeyPair(test.curve, &test.opt.Public, &test.opt.Private)
 				require.NoError(t, err)
 
 				t.Run("SlotInfo", func(t *testing.T) {
@@ -227,8 +249,8 @@ directories.tokendir = %s
 						class Class
 						label string
 					}{
-						{ClassPublicKey, test.opt.LabelPublic},
-						{ClassPrivateKey, test.opt.LabelPrivate},
+						{ClassPublicKey, test.opt.Public.Label},
+						{ClassPrivateKey, test.opt.Private.Label},
 					}
 					for i, o := range objs {
 						require.Equal(t, expect[i].class, o.Class())
@@ -257,7 +279,7 @@ directories.tokendir = %s
 
 					digest := sha256.Sum256([]byte("test"))
 
-					sig, err := priv.Sign(rand.Reader, digest[:], nil)
+					sig, err := priv.Sign(nil, digest[:], nil)
 					require.NoError(t, err)
 					require.True(t, ecdsa.VerifyASN1(pub, digest[:], sig))
 				})
@@ -269,10 +291,10 @@ directories.tokendir = %s
 	require.NoError(t, err)
 
 	t.Run("Ed25519", func(t *testing.T) {
-		priv, err := edSession.generateEd25519(&ed25519KeyOptions{
-			LabelPublic:  testKeyLabel,
-			LabelPrivate: testKeyLabel,
-		})
+		opt := &KeyOptions{
+			Label: testKeyLabel,
+		}
+		_, priv, err := edSession.GenerateEd25519KeyPair(opt, opt)
 		require.NoError(t, err)
 
 		t.Run("SlotInfo", func(t *testing.T) {
@@ -324,9 +346,42 @@ directories.tokendir = %s
 
 			digest := sha256.Sum256([]byte("test"))
 
-			sig, err := priv.Sign(rand.Reader, digest[:], nil)
+			sig, err := priv.Sign(nil, digest[:], nil)
 			require.NoError(t, err)
 			require.True(t, ed25519.Verify(pub, digest[:], sig))
+		})
+	})
+
+	rsaSession, err := newSession(t, m)
+	require.NoError(t, err)
+	t.Run("RSA", func(t *testing.T) {
+		opt := &KeyOptions{
+			Label: testKeyLabel,
+		}
+		pub, priv, err := rsaSession.GenerateRSAKeyPair(2048, 0, opt, opt)
+		require.NoError(t, err)
+
+		t.Run("Find", func(t *testing.T) {
+			_, err := FindMatchingPublicKey(priv, MatchID|MatchLabel)
+			require.NoError(t, err)
+		})
+
+		t.Run("SignPSS", func(t *testing.T) {
+			digest := sha256.Sum256([]byte("test"))
+			opt := rsa.PSSOptions{
+				SaltLength: sha256.Size,
+				Hash:       crypto.SHA256,
+			}
+			sig, err := priv.Sign(nil, digest[:], &opt)
+			require.NoError(t, err)
+			require.NoError(t, rsa.VerifyPSS(&pub.PublicKey, crypto.SHA256, digest[:], sig, &opt))
+		})
+
+		t.Run("SignPKCS1v15", func(t *testing.T) {
+			digest := sha256.Sum256([]byte("test"))
+			sig, err := priv.Sign(nil, digest[:], nil)
+			require.NoError(t, err)
+			require.NoError(t, rsa.VerifyPKCS1v15(&pub.PublicKey, 0, digest[:], sig))
 		})
 	})
 

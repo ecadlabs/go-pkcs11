@@ -571,6 +571,275 @@ func (s *Session) Objects(filter ...TypeValue) (objs []*Object, err error) {
 	return objs, nil
 }
 
+type KeyOptions struct {
+	Label string
+	ID    []byte
+	Token bool
+}
+
+func (k *KeyOptions) fillTemplate(tpl *[]C.CK_ATTRIBUTE, pinner *runtime.Pinner) {
+	cToken := C.CK_BBOOL(C.CK_FALSE)
+	if k.Token {
+		cToken = C.CK_BBOOL(C.CK_TRUE)
+	}
+	pinner.Pin(&cToken)
+	*tpl = append(*tpl, C.CK_ATTRIBUTE{C.CKA_TOKEN, C.CK_VOID_PTR(&cToken), C.CK_ULONG(unsafe.Sizeof(cToken))})
+	if k.Label != "" {
+		cs := []byte(k.Label)
+		pinner.Pin(&cs[0])
+		*tpl = append(*tpl, C.CK_ATTRIBUTE{
+			C.CKA_LABEL,
+			C.CK_VOID_PTR(&cs[0]),
+			C.CK_ULONG(len(cs)),
+		})
+	}
+	if len(k.ID) != 0 {
+		pinner.Pin(&k.ID[0])
+		*tpl = append(*tpl, C.CK_ATTRIBUTE{
+			C.CKA_OBJECT_ID,
+			C.CK_VOID_PTR(&k.ID[0]),
+			C.CK_ULONG(len(k.ID)),
+		})
+	}
+}
+
+func (s *Session) GenerateECDSAKeyPair(oid asn1enc.ObjectIdentifier, pubOpt, privOpt *KeyOptions) (*ECDSAPublicKey, *ECDSAPrivateKey, error) {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	var oidBuilder cryptobyte.Builder
+	oidBuilder.AddASN1ObjectIdentifier(oid)
+	ecParam, _ := oidBuilder.Bytes()
+	pinner.Pin(&ecParam[0])
+
+	cTrue := C.CK_BBOOL(C.CK_TRUE)
+	cFalse := C.CK_BBOOL(C.CK_FALSE)
+	pinner.Pin(&cTrue)
+	pinner.Pin(&cFalse)
+
+	privTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+	if privOpt != nil {
+		privOpt.fillTemplate(&privTmpl, &pinner)
+	}
+
+	pubTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_EC_PARAMS, C.CK_VOID_PTR(&ecParam[0]), C.CK_ULONG(len(ecParam))},
+		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+	if pubOpt != nil {
+		pubOpt.fillTemplate(&pubTmpl, &pinner)
+	}
+
+	mechanism := C.CK_MECHANISM{
+		mechanism: C.CKM_EC_KEY_PAIR_GEN,
+	}
+	var (
+		pubH  C.CK_OBJECT_HANDLE
+		privH C.CK_OBJECT_HANDLE
+	)
+	err := s.ft.C_GenerateKeyPair(
+		s.h, &mechanism,
+		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
+		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
+		&pubH, &privH,
+	)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pubObj, err := s.newObject(pubH)
+	if err != nil {
+		return nil, nil, err
+	}
+	pub, err := newECDSAPublicKey(pubObj, oid)
+	if err != nil {
+		return nil, nil, err
+	}
+	privObj, err := s.newObject(privH)
+	if err != nil {
+		return nil, nil, err
+	}
+	priv, err := newECDSAPrivateKey(privObj, oid)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var rawPriv *ECDSAPrivateKey
+	switch p := priv.(type) {
+	case *ECDSAPrivateKey:
+		rawPriv = p
+	case *ECDSAPrivateKeyEx:
+		rawPriv = &p.ECDSAPrivateKey
+	default:
+		panic(fmt.Sprintf("pkcs11: unexpected key type %T", priv))
+	}
+	return pub, rawPriv, nil
+}
+
+func (s *Session) GenerateEd25519KeyPair(pubOpt, privOpt *KeyOptions) (*Ed25519PublicKey, *Ed25519PrivateKey, error) {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	var paramBuilder cryptobyte.Builder
+	paramBuilder.AddASN1(asn1.PrintableString, func(c *cryptobyte.Builder) {
+		c.AddBytes([]byte("edwards25519"))
+	})
+	ecParam, _ := paramBuilder.Bytes()
+	pinner.Pin(&ecParam[0])
+
+	cTrue := C.CK_BBOOL(C.CK_TRUE)
+	cFalse := C.CK_BBOOL(C.CK_FALSE)
+	pinner.Pin(&cTrue)
+	pinner.Pin(&cFalse)
+
+	privTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+	if privOpt != nil {
+		privOpt.fillTemplate(&privTmpl, &pinner)
+	}
+
+	pubTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_EC_PARAMS, C.CK_VOID_PTR(&ecParam[0]), C.CK_ULONG(len(ecParam))},
+		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+	if pubOpt != nil {
+		pubOpt.fillTemplate(&pubTmpl, &pinner)
+	}
+
+	mechanism := C.CK_MECHANISM{
+		mechanism: C.CKM_EC_EDWARDS_KEY_PAIR_GEN,
+	}
+	var (
+		pubH  C.CK_OBJECT_HANDLE
+		privH C.CK_OBJECT_HANDLE
+	)
+
+	err := s.ft.C_GenerateKeyPair(
+		s.h, &mechanism,
+		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
+		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
+		&pubH, &privH,
+	)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pubObj, err := s.newObject(pubH)
+	if err != nil {
+		return nil, nil, err
+	}
+	pub, err := newEd25519PublicKey(pubObj, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	privObj, err := s.newObject(privH)
+	if err != nil {
+		return nil, nil, err
+	}
+	priv, err := newEd25519PrivateKey(privObj, false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var rawPriv *Ed25519PrivateKey
+	switch p := priv.(type) {
+	case *Ed25519PrivateKey:
+		rawPriv = p
+	case *Ed25519PrivateKeyEx:
+		rawPriv = p.Ed25519PrivateKey
+	default:
+		panic(fmt.Sprintf("pkcs11: unexpected key type %T", priv))
+	}
+	return pub, rawPriv, nil
+}
+
+func (s *Session) GenerateRSAKeyPair(bits, exp int, pubOpt, privOpt *KeyOptions) (*RSAPublicKey, *RSAPrivateKey, error) {
+	if exp == 0 {
+		exp = 0x10001 // PKCS#11 default value
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	cTrue := C.CK_BBOOL(C.CK_TRUE)
+	cFalse := C.CK_BBOOL(C.CK_FALSE)
+	pinner.Pin(&cTrue)
+	pinner.Pin(&cFalse)
+
+	privTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_DECRYPT, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_UNWRAP, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+	if privOpt != nil {
+		privOpt.fillTemplate(&privTmpl, &pinner)
+	}
+
+	cBits := C.CK_ULONG(bits)
+	cExp := big.NewInt(int64(exp)).Bytes()
+	pinner.Pin(&cBits)
+	pinner.Pin(&cExp[0])
+
+	pubTmpl := []C.CK_ATTRIBUTE{
+		{C.CKA_MODULUS_BITS, C.CK_VOID_PTR(&cBits), C.CK_ULONG(unsafe.Sizeof(cBits))},
+		{C.CKA_PUBLIC_EXPONENT, C.CK_VOID_PTR(&cExp[0]), C.CK_ULONG(len(cExp))},
+		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_ENCRYPT, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+		{C.CKA_WRAP, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
+	}
+	if pubOpt != nil {
+		pubOpt.fillTemplate(&pubTmpl, &pinner)
+	}
+
+	mechanism := C.CK_MECHANISM{
+		mechanism: C.CKM_RSA_PKCS_KEY_PAIR_GEN,
+	}
+	var (
+		pubH  C.CK_OBJECT_HANDLE
+		privH C.CK_OBJECT_HANDLE
+	)
+
+	err := s.ft.C_GenerateKeyPair(
+		s.h, &mechanism,
+		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
+		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
+		&pubH, &privH,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pubObj, err := s.newObject(pubH)
+	if err != nil {
+		return nil, nil, err
+	}
+	pub, err := newRSAPrivateKey(pubObj)
+	if err != nil {
+		return nil, nil, err
+	}
+	privObj, err := s.newObject(privH)
+	if err != nil {
+		return nil, nil, err
+	}
+	priv, err := newRSAPrivateKey(privObj)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return (*RSAPublicKey)(pub), priv, nil
+}
+
 func decodeOctetString(src []byte) []byte {
 	x := cryptobyte.String(src)
 	var pt cryptobyte.String
@@ -696,24 +965,24 @@ func (o *Object) publicKey(kt KeyType) (PublicKey, error) {
 }
 
 var (
-	oidCurveP224 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 33}
-	oidCurveP256 = asn1enc.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
-	oidCurveP384 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 34}
-	oidCurveP521 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 35}
-	oidCurveS256 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 10} // http://www.secg.org/sec2-v2.pdf
+	CurveP224 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 33}
+	CurveP256 = asn1enc.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
+	CurveP384 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 34}
+	CurveP521 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 35}
+	CurveS256 = asn1enc.ObjectIdentifier{1, 3, 132, 0, 10} // http://www.secg.org/sec2-v2.pdf
 )
 
 func oidToCurve(oid asn1enc.ObjectIdentifier) elliptic.Curve {
 	switch {
-	case oid.Equal(oidCurveP224):
+	case oid.Equal(CurveP224):
 		return elliptic.P224()
-	case oid.Equal(oidCurveP256):
+	case oid.Equal(CurveP256):
 		return elliptic.P256()
-	case oid.Equal(oidCurveP384):
+	case oid.Equal(CurveP384):
 		return elliptic.P384()
-	case oid.Equal(oidCurveP521):
+	case oid.Equal(CurveP521):
 		return elliptic.P521()
-	case oid.Equal(oidCurveS256):
+	case oid.Equal(CurveS256):
 		return secp256k1.S256()
 	default:
 		return nil
@@ -781,9 +1050,9 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 
 	switch kt.Value {
 	case KeyEC:
-		return newECDSAPrivateKey(o)
+		return newECDSAPrivateKey(o, nil)
 	case KeyECEdwards:
-		return newEd25519PrivateKey(o)
+		return newEd25519PrivateKey(o, true)
 	case KeyRSA:
 		return newRSAPrivateKey(o)
 	default:
@@ -831,14 +1100,15 @@ func (e *ECDSAPrivateKeyEx) Public() crypto.PublicKey { return &e.PublicKey }
 
 var _ crypto.Signer = (*ECDSAPrivateKeyEx)(nil)
 
-func newECDSAPrivateKey(o *Object) (PrivateKey, error) {
-	ecParams := NewArray[[]byte](nil)
-	if err := o.GetAttribute(AttributeECParams, ecParams); err != nil {
-		return nil, err
-	}
-	oid := decodeOID(ecParams.Value)
+func newECDSAPrivateKey(o *Object, oid asn1enc.ObjectIdentifier) (PrivateKey, error) {
 	if oid == nil {
-		return nil, errors.New("pkcs11: error decoding curve OID")
+		ecParams := NewArray[[]byte](nil)
+		if err := o.GetAttribute(AttributeECParams, ecParams); err != nil {
+			return nil, err
+		}
+		if oid = decodeOID(ecParams.Value); oid == nil {
+			return nil, errors.New("pkcs11: error decoding curve OID")
+		}
 	}
 
 	if pub, err := newECDSAPublicKey(o, oid); err == nil {
@@ -973,20 +1243,20 @@ func encodePrintable(src string) []byte {
 	return b.BytesOrPanic()
 }
 
-func newEd25519PrivateKey(o *Object) (PrivateKey, error) {
-	ecParams := NewArray[[]byte](nil)
-	if err := o.GetAttribute(AttributeECParams, ecParams); err != nil {
-		return nil, err
+func newEd25519PrivateKey(o *Object, checkECParams bool) (PrivateKey, error) {
+	if checkECParams {
+		ecParams := NewArray[[]byte](nil)
+		if err := o.GetAttribute(AttributeECParams, ecParams); err != nil {
+			return nil, err
+		}
+		curve, ok := decodePrintable(ecParams.Value)
+		if !ok {
+			return nil, fmt.Errorf("pkcs11: error decoding curve ID")
+		}
+		if curve != ed25519Curve {
+			return nil, fmt.Errorf("pkcs11: unsupported curve %s", string(curve))
+		}
 	}
-
-	curve, ok := decodePrintable(ecParams.Value)
-	if !ok {
-		return nil, fmt.Errorf("pkcs11: error decoding curve ID")
-	}
-	if curve != ed25519Curve {
-		return nil, fmt.Errorf("pkcs11: unsupported curve %s", string(curve))
-	}
-
 	if pub, err := newEd25519PublicKey(o, false); err == nil {
 		return &Ed25519PrivateKeyEx{
 			PublicKey:         pub.PublicKey,
@@ -1143,11 +1413,11 @@ func (r *RSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts)
 		}
 		var pinner runtime.Pinner
 		defer pinner.Unpin()
-		pptr := unsafe.Pointer(&params)
-		pinner.Pin(pptr)
+		pinner.Pin(&params)
 
 		m.mechanism = C.CKM_RSA_PKCS_PSS
-		m.pParameter = C.CK_VOID_PTR(pptr)
+		m.pParameter = C.CK_VOID_PTR(&params)
+		m.ulParameterLen = C.CK_ULONG(unsafe.Sizeof(params))
 	} else {
 		m.mechanism = C.CKM_RSA_PKCS
 	}
@@ -1157,8 +1427,8 @@ func (r *RSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts)
 func (r *RSAPrivateKey) kt() KeyType { return KeyRSA }
 func (r *RSAPrivateKey) pubFilter() []TypeValue {
 	return []TypeValue{
-		TypeValue{AttributeModulus, NewArray(r.N.Bytes())},
-		TypeValue{AttributePublicExponent, NewArray(big.NewInt(int64(r.E)).Bytes())},
+		{AttributeModulus, NewArray(r.N.Bytes())},
+		{AttributePublicExponent, NewArray(big.NewInt(int64(r.E)).Bytes())},
 	}
 }
 
