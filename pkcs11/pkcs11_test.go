@@ -21,7 +21,9 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
@@ -382,6 +384,33 @@ directories.tokendir = %s
 			sig, err := priv.Sign(nil, digest[:], nil)
 			require.NoError(t, err)
 			require.NoError(t, rsa.VerifyPKCS1v15(&pub.PublicKey, 0, digest[:], sig))
+		})
+
+		t.Run("RoundtripOAEP", func(t *testing.T) {
+			data := []byte("text")
+			ct, err := pub.EncryptOAEP(crypto.SHA1, data, nil)
+			require.NoError(t, err)
+			pt, err := priv.DecryptOAEP(crypto.SHA1, ct, nil)
+			require.NoError(t, err)
+			require.Equal(t, data, pt)
+		})
+
+		t.Run("DecryptOAEP", func(t *testing.T) {
+			data := []byte("text")
+			ct, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, &pub.PublicKey, data, nil)
+			require.NoError(t, err)
+			pt, err := priv.DecryptOAEP(crypto.SHA1, ct, nil)
+			require.NoError(t, err)
+			require.Equal(t, data, pt)
+		})
+
+		t.Run("RoundtripPKCS1v15", func(t *testing.T) {
+			data := []byte("text")
+			ct, err := rsa.EncryptPKCS1v15(rand.Reader, &pub.PublicKey, data)
+			require.NoError(t, err)
+			pt, err := priv.DecryptPKCS1v15(ct)
+			require.NoError(t, err)
+			require.Equal(t, data, pt)
 		})
 	})
 
