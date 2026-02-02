@@ -558,18 +558,19 @@ func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) 
 func (s *Session) CreatePublicKey(pub crypto.PublicKey, attrs ...attr.Attribute) (PublicKey, error) {
 	switch p := pub.(type) {
 	case (*ecdsa.PublicKey):
-		return s.createECDSAPublicKey(p, attrs)
+		return s.CreateECDSAPublicKey(p, attrs...)
 	case (ed25519.PublicKey):
-		return s.createEd25519PublicKey(p, attrs)
+		return s.CreateEd25519PublicKey(p, attrs...)
 	case (*rsa.PublicKey):
-		return s.createRSAPublicKey(p, attrs)
+		return s.CreateRSAPublicKey(p, attrs...)
 	default:
 		return nil, fmt.Errorf("pkcs11: unknown public key type %T", pub)
 	}
 }
 
-type ObjectType interface {
+type Extractable interface {
 	Object() *Object
+	Extractable()
 }
 
 // Object represents a single object stored within a slot. For example a key or
@@ -721,6 +722,18 @@ func (o *Object) encrypt(m *C.CK_MECHANISM, data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return ciphertext[:ciphertextLen], nil
+}
+
+func (o *Object) wrap(m *C.CK_MECHANISM, tgt *Object) ([]byte, error) {
+	var wrappedLen C.CK_ULONG
+	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, nil, &wrappedLen); err != nil {
+		return nil, err
+	}
+	wrappedKey := make([]byte, wrappedLen)
+	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, (*C.CK_BYTE)(&wrappedKey[0]), &wrappedLen); err != nil {
+		return nil, err
+	}
+	return wrappedKey[:wrappedLen], nil
 }
 
 type PublicKey interface {

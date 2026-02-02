@@ -413,6 +413,42 @@ directories.tokendir = %s
 			_, err := symSession.GenerateAESSecretKey(32)
 			require.NoError(t, err)
 		})
+		t.Run("GenerateAndWrapOAEP", func(t *testing.T) {
+			genKey, err := symSession.GenerateGenericSecretKey(32, attr.Extractable(1))
+			require.NoError(t, err)
+
+			priv, err := rsa.GenerateKey(rand.Reader, 2048)
+			require.NoError(t, err)
+
+			pub, err := symSession.CreateRSAPublicKey(&priv.PublicKey)
+			require.NoError(t, err)
+
+			wrapped, err := pub.WrapOAEP(genKey, crypto.SHA1, nil)
+			require.NoError(t, err)
+			require.Equal(t, 256, len(wrapped))
+
+			decrypted, err := rsa.DecryptOAEP(sha1.New(), rand.Reader, priv, wrapped, nil)
+			require.NoError(t, err)
+			require.Equal(t, 32, len(decrypted))
+		})
+		t.Run("GenerateAndWrapPKCS1v15", func(t *testing.T) {
+			genKey, err := symSession.GenerateGenericSecretKey(32, attr.Extractable(1))
+			require.NoError(t, err)
+
+			priv, err := rsa.GenerateKey(rand.Reader, 2048)
+			require.NoError(t, err)
+
+			pub, err := symSession.CreateRSAPublicKey(&priv.PublicKey)
+			require.NoError(t, err)
+
+			wrapped, err := pub.WrapPKCS1v15(genKey)
+			require.NoError(t, err)
+			require.Equal(t, 256, len(wrapped))
+
+			decrypted, err := rsa.DecryptPKCS1v15(rand.Reader, priv, wrapped)
+			require.NoError(t, err)
+			require.Equal(t, 32, len(decrypted))
+		})
 	})
 
 	certSession, err := newSession(t, m)

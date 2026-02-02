@@ -124,6 +124,8 @@ func (r *RSAPrivateKey) Decrypt(_ io.Reader, ciphertext []byte, opts crypto.Decr
 	return r.DecryptPKCS1v15(ciphertext)
 }
 
+func (*RSAPrivateKey) Extractable() {}
+
 var _ crypto.Decrypter = (*RSAPrivateKey)(nil)
 
 func (r *RSAPrivateKey) kt() attr.KeyTypeID { return attr.KeyRSA }
@@ -158,12 +160,10 @@ type RSAPublicKey RSAPrivateKey
 func (r *RSAPublicKey) Object() *Object          { return r.o }
 func (r *RSAPublicKey) Public() crypto.PublicKey { return &r.PublicKey }
 
-func (r *RSAPublicKey) EncryptOAEP(hash crypto.Hash, msg []byte, label []byte) ([]byte, error) {
+func initOAEP(hash crypto.Hash, label []byte, pinner *runtime.Pinner) (*C.CK_MECHANISM, error) {
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_RSA_PKCS_OAEP,
 	}
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
 	params := C.CK_RSA_PKCS_OAEP_PARAMS{
 		source: C.CKZ_DATA_SPECIFIED, // SoftSHM2 requires this field to be always set
 	}
@@ -180,7 +180,17 @@ func (r *RSAPublicKey) EncryptOAEP(hash crypto.Hash, msg []byte, label []byte) (
 	pinner.Pin(&params)
 	m.pParameter = C.CK_VOID_PTR(&params)
 	m.ulParameterLen = C.CK_ULONG(unsafe.Sizeof(params))
-	return r.o.encrypt(&m, msg)
+	return &m, nil
+}
+
+func (r *RSAPublicKey) EncryptOAEP(hash crypto.Hash, msg []byte, label []byte) ([]byte, error) {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	m, err := initOAEP(hash, label, &pinner)
+	if err != nil {
+		return nil, err
+	}
+	return r.o.encrypt(m, msg)
 }
 
 func (r *RSAPublicKey) EncryptPKCS1v15(msg []byte) ([]byte, error) {
@@ -188,6 +198,23 @@ func (r *RSAPublicKey) EncryptPKCS1v15(msg []byte) ([]byte, error) {
 		mechanism: C.CKM_RSA_PKCS,
 	}
 	return r.o.encrypt(&m, msg)
+}
+
+func (r *RSAPublicKey) WrapOAEP(k Extractable, hash crypto.Hash, label []byte) ([]byte, error) {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	m, err := initOAEP(hash, label, &pinner)
+	if err != nil {
+		return nil, err
+	}
+	return r.o.wrap(m, k.Object())
+}
+
+func (r *RSAPublicKey) WrapPKCS1v15(k Extractable) ([]byte, error) {
+	m := C.CK_MECHANISM{
+		mechanism: C.CKM_RSA_PKCS,
+	}
+	return r.o.wrap(&m, k.Object())
 }
 
 func (s *Session) GenerateRSAKeyPair(bits, exp int, pubOpt, privOpt []attr.Attribute) (*RSAPublicKey, *RSAPrivateKey, error) {
@@ -254,7 +281,7 @@ func (s *Session) GenerateRSAKeyPair(bits, exp int, pubOpt, privOpt []attr.Attri
 	return (*RSAPublicKey)(pub), priv, nil
 }
 
-func (s *Session) createRSAPublicKey(src *rsa.PublicKey, opt []attr.Attribute) (*RSAPublicKey, error) {
+func (s *Session) CreateRSAPublicKey(src *rsa.PublicKey, opt ...attr.Attribute) (*RSAPublicKey, error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 

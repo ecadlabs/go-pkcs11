@@ -78,6 +78,8 @@ func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerO
 	return (*Object)(e).sign(&m, digest)
 }
 
+func (*Ed25519PrivateKey) Extractable() {}
+
 func (e *Ed25519PrivateKey) kt() attr.KeyTypeID { return attr.KeyECEdwards }
 func (e *Ed25519PrivateKey) pubFilter() []attr.Attribute {
 	return []attr.Attribute{attr.ECParams(encodePrintable(ed25519Curve))}
@@ -191,7 +193,7 @@ func (s *Session) GenerateEd25519KeyPair(pubOpt, privOpt []attr.Attribute) (*Ed2
 	return pub, rawPriv, nil
 }
 
-func (s *Session) createEd25519PublicKey(src ed25519.PublicKey, opt []attr.Attribute) (*Ed25519PublicKey, error) {
+func (s *Session) CreateEd25519PublicKey(src ed25519.PublicKey, opt ...attr.Attribute) (*Ed25519PublicKey, error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 

@@ -152,6 +152,8 @@ func (e *ECDSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 	return b.Bytes()
 }
 
+func (*ECDSAPrivateKey) Extractable() {}
+
 func curveEq(a, b elliptic.Curve) bool {
 	ap, bp := a.Params(), b.Params()
 	pOk := subtle.ConstantTimeCompare(ap.P.Bytes(), bp.P.Bytes()) == 1
@@ -277,7 +279,7 @@ func (s *Session) GenerateECDSAKeyPair(oid asn1enc.ObjectIdentifier, pubOpt []at
 	return pub, rawPriv, nil
 }
 
-func (s *Session) createECDSAPublicKey(src *ecdsa.PublicKey, attrs []attr.Attribute) (*ECDSAPublicKey, error) {
+func (s *Session) CreateECDSAPublicKey(src *ecdsa.PublicKey, attrs ...attr.Attribute) (*ECDSAPublicKey, error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 

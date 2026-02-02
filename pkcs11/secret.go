@@ -17,6 +17,7 @@ type GenericSecretKey struct {
 
 func (g *GenericSecretKey) Len() int        { return g.lenBytes }
 func (g *GenericSecretKey) Object() *Object { return g.o }
+func (*GenericSecretKey) Extractable()      {}
 
 func (s *Session) GenerateGenericSecretKey(keyLen int, opt ...attr.Attribute) (*GenericSecretKey, error) {
 	var pinner runtime.Pinner
@@ -50,6 +51,7 @@ type AESSecretKey GenericSecretKey
 
 func (g *AESSecretKey) Len() int        { return g.lenBytes }
 func (g *AESSecretKey) Object() *Object { return g.o }
+func (*AESSecretKey) Extractable()      {}
 
 func (s *Session) GenerateAESSecretKey(keyLen int, opt ...attr.Attribute) (*AESSecretKey, error) {
 	var pinner runtime.Pinner
