@@ -35,6 +35,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/ecadlabs/go-pkcs11/pkcs11/attr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,63 +161,25 @@ directories.tokendir = %s
 		require.Equal(t, TokenRNG|TokenLoginRequired|TokenRestoreKeyNotNeeded|TokenSOPinLocked|TokenSOPinToBeChanged, info.Token.Flags)
 	}
 
-	type keyPairOptions struct {
-		Public  KeyOptions
-		Private KeyOptions
-	}
-
 	ecdsaTests := []*struct {
 		session *Session
 		name    string
-		opt     keyPairOptions
 		curve   asn1.ObjectIdentifier
 	}{
 		{
-			name: "P256",
-			opt: keyPairOptions{
-				Public: KeyOptions{
-					Label: testKeyLabel,
-				},
-				Private: KeyOptions{
-					Label: testKeyLabel,
-				},
-			},
+			name:  "P256",
 			curve: CurveP256,
 		},
 		{
-			name: "P384",
-			opt: keyPairOptions{
-				Public: KeyOptions{
-					Label: testKeyLabel,
-				},
-				Private: KeyOptions{
-					Label: testKeyLabel,
-				},
-			},
+			name:  "P384",
 			curve: CurveP384,
 		},
 		{
-			name: "P521",
-			opt: keyPairOptions{
-				Public: KeyOptions{
-					Label: testKeyLabel,
-				},
-				Private: KeyOptions{
-					Label: testKeyLabel,
-				},
-			},
+			name:  "P521",
 			curve: CurveP521,
 		},
 		{
-			name: "S256",
-			opt: keyPairOptions{
-				Public: KeyOptions{
-					Label: testKeyLabel,
-				},
-				Private: KeyOptions{
-					Label: testKeyLabel,
-				},
-			},
+			name:  "S256",
 			curve: CurveS256,
 		},
 	}
@@ -230,7 +193,9 @@ directories.tokendir = %s
 	t.Run("ECDSA", func(t *testing.T) {
 		for _, test := range ecdsaTests {
 			t.Run(test.name, func(t *testing.T) {
-				_, priv, err := test.session.GenerateECDSAKeyPair(test.curve, &test.opt.Public, &test.opt.Private)
+				pub, priv, err := test.session.GenerateECDSAKeyPair(test.curve,
+					[]attr.Attribute{attr.Label(attr.String(testKeyLabel))},
+					[]attr.Attribute{attr.Label(attr.String(testKeyLabel))})
 				require.NoError(t, err)
 
 				t.Run("SlotInfo", func(t *testing.T) {
@@ -248,11 +213,11 @@ directories.tokendir = %s
 					require.NoError(t, err)
 
 					expect := []struct {
-						class Class
+						class attr.ObjectClass
 						label string
 					}{
-						{ClassPublicKey, test.opt.Public.Label},
-						{ClassPrivateKey, test.opt.Private.Label},
+						{attr.ClassPublicKey, testKeyLabel},
+						{attr.ClassPrivateKey, testKeyLabel},
 					}
 					for i, o := range objs {
 						require.Equal(t, expect[i].class, o.Class())
@@ -261,11 +226,11 @@ directories.tokendir = %s
 				})
 
 				t.Run("Public", func(t *testing.T) {
-					objs, err := test.session.Objects(TypeValue{AttributeClass, NewScalarV(ClassPublicKey)})
+					objs, err := test.session.Objects(attr.Class(attr.ClassPublicKey))
 					require.NoError(t, err)
 					require.Equal(t, 1, len(objs))
 					obj := objs[0]
-					pub, err := obj.PublicKey()
+					pub, err := NewPublicKey(obj)
 					require.NoError(t, err)
 
 					_, ok := pub.(*ECDSAPublicKey)
@@ -285,6 +250,15 @@ directories.tokendir = %s
 					require.NoError(t, err)
 					require.True(t, ecdsa.VerifyASN1(pub, digest[:], sig))
 				})
+
+				t.Run("CreatePublicKey", func(t *testing.T) {
+					p, err := test.session.CreatePublicKey(&pub.PublicKey)
+					require.NoError(t, err)
+					// re-read
+					pub2, err := NewPublicKey(p.Object())
+					require.NoError(t, err)
+					require.True(t, pub.PublicKey.Equal(pub2.Public()))
+				})
 			})
 		}
 	})
@@ -293,10 +267,9 @@ directories.tokendir = %s
 	require.NoError(t, err)
 
 	t.Run("Ed25519", func(t *testing.T) {
-		opt := &KeyOptions{
-			Label: testKeyLabel,
-		}
-		_, priv, err := edSession.GenerateEd25519KeyPair(opt, opt)
+		pub, priv, err := edSession.GenerateEd25519KeyPair(
+			[]attr.Attribute{attr.Label(attr.String(testKeyLabel))},
+			[]attr.Attribute{attr.Label(attr.String(testKeyLabel))})
 		require.NoError(t, err)
 
 		t.Run("SlotInfo", func(t *testing.T) {
@@ -314,11 +287,11 @@ directories.tokendir = %s
 			require.NoError(t, err)
 
 			expect := []struct {
-				class Class
+				class attr.ObjectClass
 				label string
 			}{
-				{ClassPublicKey, testKeyLabel},
-				{ClassPrivateKey, testKeyLabel},
+				{attr.ClassPublicKey, testKeyLabel},
+				{attr.ClassPrivateKey, testKeyLabel},
 			}
 			for i, o := range objs {
 				require.Equal(t, expect[i].class, o.Class())
@@ -327,11 +300,11 @@ directories.tokendir = %s
 		})
 
 		t.Run("Public", func(t *testing.T) {
-			objs, err := edSession.Objects(TypeValue{AttributeClass, NewScalarV(ClassPublicKey)})
+			objs, err := edSession.Objects(attr.Class(attr.ClassPublicKey))
 			require.NoError(t, err)
 			require.Equal(t, 1, len(objs))
 			obj := objs[0]
-			pub, err := obj.PublicKey()
+			pub, err := NewPublicKey(obj)
 			require.NoError(t, err)
 
 			pub2, ok := pub.(*Ed25519PublicKey)
@@ -352,15 +325,21 @@ directories.tokendir = %s
 			require.NoError(t, err)
 			require.True(t, ed25519.Verify(pub, digest[:], sig))
 		})
+
+		t.Run("CreatePublicKey", func(t *testing.T) {
+			p, err := edSession.CreatePublicKey(pub.PublicKey)
+			require.NoError(t, err)
+			// re-read
+			pub2, err := NewPublicKey(p.Object())
+			require.NoError(t, err)
+			require.True(t, pub.PublicKey.Equal(pub2.Public()))
+		})
 	})
 
 	rsaSession, err := newSession(t, m)
 	require.NoError(t, err)
 	t.Run("RSA", func(t *testing.T) {
-		opt := &KeyOptions{
-			Label: testKeyLabel,
-		}
-		pub, priv, err := rsaSession.GenerateRSAKeyPair(2048, 0, opt, opt)
+		pub, priv, err := rsaSession.GenerateRSAKeyPair(2048, 0, []attr.Attribute{attr.Label(attr.String(testKeyLabel))}, []attr.Attribute{attr.Label(attr.String(testKeyLabel))})
 		require.NoError(t, err)
 
 		t.Run("Find", func(t *testing.T) {
@@ -411,6 +390,28 @@ directories.tokendir = %s
 			pt, err := priv.DecryptPKCS1v15(ct)
 			require.NoError(t, err)
 			require.Equal(t, data, pt)
+		})
+
+		t.Run("CreatePublicKey", func(t *testing.T) {
+			p, err := rsaSession.CreatePublicKey(&pub.PublicKey)
+			require.NoError(t, err)
+			// re-read
+			pub2, err := NewPublicKey(p.Object())
+			require.NoError(t, err)
+			require.True(t, pub.PublicKey.Equal(pub2.Public()))
+		})
+	})
+
+	symSession, err := newSession(t, m)
+	require.NoError(t, err)
+	t.Run("SecretKey", func(t *testing.T) {
+		t.Run("GenerateGeneric", func(t *testing.T) {
+			_, err := symSession.GenerateGenericSecretKey(32)
+			require.NoError(t, err)
+		})
+		t.Run("GenerateAES", func(t *testing.T) {
+			_, err := symSession.GenerateAESSecretKey(32)
+			require.NoError(t, err)
 		})
 	})
 

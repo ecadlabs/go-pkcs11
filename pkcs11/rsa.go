@@ -12,85 +12,9 @@ import (
 	"math/big"
 	"runtime"
 	"unsafe"
+
+	"github.com/ecadlabs/go-pkcs11/pkcs11/attr"
 )
-
-func (s *Session) GenerateRSAKeyPair(bits, exp int, pubOpt, privOpt *KeyOptions) (*RSAPublicKey, *RSAPrivateKey, error) {
-	if exp == 0 {
-		exp = 0x10001 // PKCS#11 default value
-	}
-
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-
-	cTrue := C.CK_BBOOL(C.CK_TRUE)
-	cFalse := C.CK_BBOOL(C.CK_FALSE)
-	pinner.Pin(&cTrue)
-	pinner.Pin(&cFalse)
-
-	privTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_PRIVATE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_SENSITIVE, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_SIGN, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_DECRYPT, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_UNWRAP, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-	}
-	if privOpt != nil {
-		privOpt.fillTemplate(&privTmpl, &pinner)
-	}
-
-	cBits := C.CK_ULONG(bits)
-	cExp := big.NewInt(int64(exp)).Bytes()
-	pinner.Pin(&cBits)
-	pinner.Pin(&cExp[0])
-
-	pubTmpl := []C.CK_ATTRIBUTE{
-		{C.CKA_MODULUS_BITS, C.CK_VOID_PTR(&cBits), C.CK_ULONG(unsafe.Sizeof(cBits))},
-		{C.CKA_PUBLIC_EXPONENT, C.CK_VOID_PTR(&cExp[0]), C.CK_ULONG(len(cExp))},
-		{C.CKA_VERIFY, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_ENCRYPT, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-		{C.CKA_WRAP, C.CK_VOID_PTR(&cTrue), C.CK_ULONG(unsafe.Sizeof(cTrue))},
-	}
-	if pubOpt != nil {
-		pubOpt.fillTemplate(&pubTmpl, &pinner)
-	}
-
-	mechanism := C.CK_MECHANISM{
-		mechanism: C.CKM_RSA_PKCS_KEY_PAIR_GEN,
-	}
-	var (
-		pubH  C.CK_OBJECT_HANDLE
-		privH C.CK_OBJECT_HANDLE
-	)
-
-	err := s.ft.C_GenerateKeyPair(
-		s.h, &mechanism,
-		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
-		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
-		&pubH, &privH,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pubObj, err := s.newObject(pubH)
-	if err != nil {
-		return nil, nil, err
-	}
-	pub, err := newRSAPrivateKey(pubObj)
-	if err != nil {
-		return nil, nil, err
-	}
-	privObj, err := s.newObject(privH)
-	if err != nil {
-		return nil, nil, err
-	}
-	priv, err := newRSAPrivateKey(privObj)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return (*RSAPublicKey)(pub), priv, nil
-}
 
 type RSAPrivateKey struct {
 	rsa.PublicKey
@@ -202,18 +126,20 @@ func (r *RSAPrivateKey) Decrypt(_ io.Reader, ciphertext []byte, opts crypto.Decr
 
 var _ crypto.Decrypter = (*RSAPrivateKey)(nil)
 
-func (r *RSAPrivateKey) kt() KeyType { return KeyRSA }
-func (r *RSAPrivateKey) pubFilter() []TypeValue {
-	return []TypeValue{
-		{AttributeModulus, NewArray(r.N.Bytes())},
-		{AttributePublicExponent, NewArray(big.NewInt(int64(r.E)).Bytes())},
+func (r *RSAPrivateKey) kt() attr.KeyTypeID { return attr.KeyRSA }
+func (r *RSAPrivateKey) pubFilter() []attr.Attribute {
+	return []attr.Attribute{
+		attr.Modulus(r.N.Bytes()),
+		attr.PublicExponent(big.NewInt(int64(r.E)).Bytes()),
 	}
 }
 
 func newRSAPrivateKey(o *Object) (*RSAPrivateKey, error) {
-	mod := NewArray[[]byte](nil)
-	exp := NewArray[[]byte](nil)
-	if err := o.GetAttributes(TypeValue{AttributeModulus, mod}, TypeValue{AttributePublicExponent, exp}); err != nil {
+	var (
+		mod attr.AttrModulus
+		exp attr.AttrPublicExponent
+	)
+	if err := o.GetAttributes(&mod, &exp); err != nil {
 		return nil, err
 	}
 	return &RSAPrivateKey{
@@ -230,7 +156,7 @@ var _ crypto.Signer = (*RSAPrivateKey)(nil)
 type RSAPublicKey RSAPrivateKey
 
 func (r *RSAPublicKey) Object() *Object          { return r.o }
-func (r *RSAPublicKey) Public() crypto.PublicKey { return r.PublicKey }
+func (r *RSAPublicKey) Public() crypto.PublicKey { return &r.PublicKey }
 
 func (r *RSAPublicKey) EncryptOAEP(hash crypto.Hash, msg []byte, label []byte) ([]byte, error) {
 	m := C.CK_MECHANISM{
@@ -262,4 +188,97 @@ func (r *RSAPublicKey) EncryptPKCS1v15(msg []byte) ([]byte, error) {
 		mechanism: C.CKM_RSA_PKCS,
 	}
 	return r.o.encrypt(&m, msg)
+}
+
+func (s *Session) GenerateRSAKeyPair(bits, exp int, pubOpt, privOpt []attr.Attribute) (*RSAPublicKey, *RSAPrivateKey, error) {
+	if exp == 0 {
+		exp = 0x10001 // PKCS#11 default value
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	privOpt = append(privOpt,
+		attr.Private(1),
+		attr.Sensitive(1),
+		attr.Sign(1),
+		attr.Decrypt(1),
+		attr.Unwrap(1),
+	)
+	privTmpl := buildTemplate(privOpt, &pinner)
+
+	pubOpt = append(pubOpt,
+		attr.ModulusBits(attr.Uint(bits)),
+		attr.PublicExponent(big.NewInt(int64(exp)).Bytes()),
+		attr.Verify(1),
+		attr.Encrypt(1),
+		attr.Wrap(1),
+	)
+	pubTmpl := buildTemplate(pubOpt, &pinner)
+
+	mechanism := C.CK_MECHANISM{
+		mechanism: C.CKM_RSA_PKCS_KEY_PAIR_GEN,
+	}
+	var (
+		pubH  C.CK_OBJECT_HANDLE
+		privH C.CK_OBJECT_HANDLE
+	)
+
+	err := s.ft.C_GenerateKeyPair(
+		s.h, &mechanism,
+		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
+		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
+		&pubH, &privH,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pubObj, err := s.newObject(pubH)
+	if err != nil {
+		return nil, nil, err
+	}
+	pub, err := newRSAPrivateKey(pubObj)
+	if err != nil {
+		return nil, nil, err
+	}
+	privObj, err := s.newObject(privH)
+	if err != nil {
+		return nil, nil, err
+	}
+	priv, err := newRSAPrivateKey(privObj)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return (*RSAPublicKey)(pub), priv, nil
+}
+
+func (s *Session) createRSAPublicKey(src *rsa.PublicKey, opt []attr.Attribute) (*RSAPublicKey, error) {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	opt = append(opt,
+		attr.Class(attr.ClassPublicKey),
+		attr.KeyType(attr.KeyRSA),
+		attr.Modulus(src.N.Bytes()),
+		attr.PublicExponent(big.NewInt(int64(src.E)).Bytes()),
+		attr.Encrypt(1),
+		attr.Wrap(1),
+		attr.Verify(1),
+	)
+	tpl := buildTemplate(opt, &pinner)
+
+	var handle C.CK_OBJECT_HANDLE
+	if err := s.ft.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle); err != nil {
+		return nil, err
+	}
+	obj, err := s.newObject(handle)
+	if err != nil {
+		return nil, err
+	}
+	return &RSAPublicKey{
+		PublicKey: *src,
+		o:         obj,
+	}, nil
 }

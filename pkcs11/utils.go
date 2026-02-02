@@ -1,6 +1,13 @@
 package pkcs11
 
+/*
+#include "platform.h"
+*/
+import "C"
 import (
+	"runtime"
+
+	"github.com/ecadlabs/go-pkcs11/pkcs11/attr"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/cryptobyte/asn1"
 )
@@ -9,13 +16,16 @@ func FindMatchingPublicKey(priv PrivateKey, flags MatchFlags) (PublicKey, error)
 	o := priv.Object()
 	kt := priv.kt()
 	optFilter := priv.pubFilter()
-	fl := make([]TypeValue, 0, 4+len(optFilter))
-	fl = append(fl, TypeValue{AttributeClass, NewScalarV(ClassPublicKey)}, TypeValue{AttributeKeyType, NewScalarV(kt)})
+	fl := make([]attr.Attribute, 0, 4+len(optFilter))
+	fl = append(fl,
+		attr.Class(attr.ClassPublicKey),
+		attr.KeyType(kt),
+	)
 	if flags&MatchLabel != 0 && len(o.label) != 0 {
-		fl = append(fl, TypeValue{AttributeLabel, NewArray(o.label)})
+		fl = append(fl, attr.Label(o.label))
 	}
 	if flags&MatchID != 0 && len(o.id) != 0 {
-		fl = append(fl, TypeValue{AttributeID, NewArray(o.id)})
+		fl = append(fl, attr.ID(o.id))
 	}
 	fl = append(fl, optFilter...)
 
@@ -28,7 +38,7 @@ func FindMatchingPublicKey(priv PrivateKey, flags MatchFlags) (PublicKey, error)
 	} else if len(objects) > 1 {
 		return nil, ErrNonUnique
 	}
-	return objects[0].publicKey(kt)
+	return newPublicKey(objects[0], kt)
 }
 
 func decodeOctetString(src []byte) []byte {
@@ -38,4 +48,24 @@ func decodeOctetString(src []byte) []byte {
 		return nil
 	}
 	return pt
+}
+
+func encodeOctetString(src []byte) []byte {
+	var b cryptobyte.Builder
+	b.AddASN1OctetString(src)
+	return b.BytesOrPanic()
+}
+
+func buildTemplate(attrs []attr.Attribute, pinner *runtime.Pinner) []C.CK_ATTRIBUTE {
+	out := make([]C.CK_ATTRIBUTE, len(attrs))
+	for i, a := range attrs {
+		p := a.Ptr()
+		pinner.Pin(p)
+		out[i] = C.CK_ATTRIBUTE{
+			_type:      C.CK_ATTRIBUTE_TYPE(a.Type()),
+			pValue:     C.CK_VOID_PTR(p),
+			ulValueLen: C.CK_ULONG(a.Len()),
+		}
+	}
+	return out
 }

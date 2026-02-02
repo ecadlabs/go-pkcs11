@@ -24,6 +24,9 @@ package pkcs11
 import "C"
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -33,6 +36,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/ecadlabs/go-pkcs11/pkcs11/attr"
 )
 
 type dynLibrary interface {
@@ -471,14 +476,12 @@ func (s *Session) Close() error {
 func (s *Session) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
 	obj := Object{slot: s, h: o}
 
-	class := NewScalar[Class]()
-	id := NewArray[[]byte](nil)
-	label := NewArray[String](nil)
-	if err := obj.GetAttributes(
-		TypeValue{AttributeClass, class},
-		TypeValue{AttributeID, id},
-		TypeValue{AttributeLabel, label},
-	); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
+	var (
+		class attr.AttrClass
+		id    attr.AttrID
+		label attr.AttrLabel
+	)
+	if err := obj.GetAttributes(&class, &id, &label); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
 		return nil, err
 	}
 	if class.IsNil() {
@@ -502,22 +505,13 @@ func (s *Session) NewObject(h uint) (*Object, error) {
 // objects if no options are provided.
 //
 // The returned objects behavior is undefined once the Session object is closed.
-func (s *Session) Objects(filter ...TypeValue) (objs []*Object, err error) {
+func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 
 	var attrs []C.CK_ATTRIBUTE
 	if len(filter) != 0 {
-		attrs = make([]C.CK_ATTRIBUTE, len(filter))
-		for i, a := range filter {
-			ptr := a.Value.ptr()
-			pinner.Pin(ptr)
-			attrs[i] = C.CK_ATTRIBUTE{
-				_type:      C.CK_ATTRIBUTE_TYPE(a.Type),
-				pValue:     C.CK_VOID_PTR(ptr),
-				ulValueLen: C.CK_ULONG(a.Value.len()),
-			}
-		}
+		attrs = buildTemplate(filter, &pinner)
 	}
 
 	s.mtx.Lock()
@@ -561,36 +555,21 @@ func (s *Session) Objects(filter ...TypeValue) (objs []*Object, err error) {
 	return objs, nil
 }
 
-type KeyOptions struct {
-	Label string
-	ID    []byte
-	Token bool
+func (s *Session) CreatePublicKey(pub crypto.PublicKey, attrs ...attr.Attribute) (PublicKey, error) {
+	switch p := pub.(type) {
+	case (*ecdsa.PublicKey):
+		return s.createECDSAPublicKey(p, attrs)
+	case (ed25519.PublicKey):
+		return s.createEd25519PublicKey(p, attrs)
+	case (*rsa.PublicKey):
+		return s.createRSAPublicKey(p, attrs)
+	default:
+		return nil, fmt.Errorf("pkcs11: unknown public key type %T", pub)
+	}
 }
 
-func (k *KeyOptions) fillTemplate(tpl *[]C.CK_ATTRIBUTE, pinner *runtime.Pinner) {
-	cToken := C.CK_BBOOL(C.CK_FALSE)
-	if k.Token {
-		cToken = C.CK_BBOOL(C.CK_TRUE)
-	}
-	pinner.Pin(&cToken)
-	*tpl = append(*tpl, C.CK_ATTRIBUTE{C.CKA_TOKEN, C.CK_VOID_PTR(&cToken), C.CK_ULONG(unsafe.Sizeof(cToken))})
-	if k.Label != "" {
-		cs := []byte(k.Label)
-		pinner.Pin(&cs[0])
-		*tpl = append(*tpl, C.CK_ATTRIBUTE{
-			C.CKA_LABEL,
-			C.CK_VOID_PTR(&cs[0]),
-			C.CK_ULONG(len(cs)),
-		})
-	}
-	if len(k.ID) != 0 {
-		pinner.Pin(&k.ID[0])
-		*tpl = append(*tpl, C.CK_ATTRIBUTE{
-			C.CKA_OBJECT_ID,
-			C.CK_VOID_PTR(&k.ID[0]),
-			C.CK_ULONG(len(k.ID)),
-		})
-	}
+type ObjectType interface {
+	Object() *Object
 }
 
 // Object represents a single object stored within a slot. For example a key or
@@ -598,21 +577,21 @@ func (k *KeyOptions) fillTemplate(tpl *[]C.CK_ATTRIBUTE, pinner *runtime.Pinner)
 type Object struct {
 	slot  *Session
 	h     C.CK_OBJECT_HANDLE
-	class Class
+	class attr.ObjectClass
 	id    []byte
 	label []byte
 }
 
 // Class returns the type of the object stored. For example, certificate, public
 // key, or private key.
-func (o *Object) Class() Class {
+func (o *Object) Class() attr.ObjectClass {
 	return o.class
 }
 
-func (o *Object) GetAttributes(attributes ...TypeValue) error {
+func (o *Object) GetAttributes(attributes ...attr.Attribute) error {
 	attrs := make([]C.CK_ATTRIBUTE, len(attributes))
 	for i, a := range attributes {
-		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type)
+		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type())
 	}
 	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
 		return err
@@ -621,17 +600,13 @@ func (o *Object) GetAttributes(attributes ...TypeValue) error {
 	defer pinner.Unpin()
 	for i, a := range attributes {
 		if ln := attrs[i].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION {
-			a.Value.allocate(int(ln))
-			ptr := a.Value.ptr()
+			a.Allocate(int(ln))
+			ptr := a.Ptr()
 			pinner.Pin(ptr)
 			attrs[i].pValue = C.CK_VOID_PTR(ptr)
 		}
 	}
 	return o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
-}
-
-func (o *Object) GetAttribute(typ AttributeType, val Value) error {
-	return o.GetAttributes(TypeValue{Type: typ, Value: val})
 }
 
 // Label returns a string value attached to an object, which can be used to
@@ -651,11 +626,11 @@ func (o *Object) Handle() uint {
 // Certificate parses the underlying object as a certificate. If the object
 // isn't a certificate, this method fails.
 func (o *Object) Certificate() (*Certificate, error) {
-	if o.Class() != ClassCertificate {
-		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassCertificate, o.Class())
+	if o.Class() != attr.ClassCertificate {
+		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", attr.ClassCertificate, o.Class())
 	}
-	ct := NewScalar[CertificateType]()
-	if err := o.GetAttribute(AttributeCertificateType, ct); err != nil {
+	var ct attr.AttrCertificateType
+	if err := o.GetAttributes(&ct); err != nil {
 		return nil, err
 	}
 	return &Certificate{o, ct.Value}, nil
@@ -665,26 +640,30 @@ func (o *Object) Certificate() (*Certificate, error) {
 // keys are supported.
 //
 // If the object isn't a public key, this method fails.
-func (o *Object) PublicKey() (PublicKey, error) {
-	if o.Class() != ClassPublicKey {
-		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPublicKey, o.Class())
+func NewPublicKey(o *Object) (PublicKey, error) {
+	if o.Class() != attr.ClassPublicKey {
+		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", attr.ClassPublicKey, o.Class())
 	}
 
-	kt := NewScalar[KeyType]()
-	if err := o.GetAttribute(AttributeKeyType, kt); err != nil {
+	var kt attr.AttrKeyType
+	if err := o.GetAttributes(&kt); err != nil {
 		return nil, err
 	}
-	return o.publicKey(kt.Value)
+	return newPublicKey(o, kt.Value)
 }
 
-func (o *Object) publicKey(kt KeyType) (PublicKey, error) {
+func newPublicKey(o *Object, kt attr.KeyTypeID) (PublicKey, error) {
 	switch kt {
-	case KeyEC:
+	case attr.KeyEC:
 		return newECDSAPublicKey(o, nil)
-	case KeyECEdwards:
+	case attr.KeyECEdwards:
 		return newEd25519PublicKey(o, true)
-	case KeyRSA:
-		return newRSAPrivateKey(o)
+	case attr.KeyRSA:
+		p, err := newRSAPrivateKey(o)
+		if err != nil {
+			return nil, err
+		}
+		return (*RSAPublicKey)(p), nil
 	default:
 		return nil, fmt.Errorf("unsupported key type: 0x%08x", kt)
 	}
@@ -763,8 +742,8 @@ type PrivateKey interface {
 	Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error)
 	Object() *Object
 
-	kt() KeyType
-	pubFilter() []TypeValue
+	kt() attr.KeyTypeID
+	pubFilter() []attr.Attribute
 }
 
 type Decrypter interface {
@@ -775,22 +754,22 @@ type Decrypter interface {
 // keys are supported.
 //
 // If the object isn't a public key, this method fails.
-func (o *Object) PrivateKey() (PrivateKey, error) {
-	if o.Class() != ClassPrivateKey {
-		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", ClassPrivateKey, o.Class())
+func NewPrivateKey(o *Object) (PrivateKey, error) {
+	if o.Class() != attr.ClassPrivateKey {
+		return nil, fmt.Errorf("pkcs11: expected object class %v, got %v", attr.ClassPrivateKey, o.Class())
 	}
 
-	kt := NewScalar[KeyType]()
-	if err := o.GetAttribute(AttributeKeyType, kt); err != nil {
+	var kt attr.AttrKeyType
+	if err := o.GetAttributes(&kt); err != nil {
 		return nil, fmt.Errorf("pkcs11: error getting EC params: %w", err)
 	}
 
 	switch kt.Value {
-	case KeyEC:
+	case attr.KeyEC:
 		return newECDSAPrivateKey(o, nil)
-	case KeyECEdwards:
+	case attr.KeyECEdwards:
 		return newEd25519PrivateKey(o, true)
-	case KeyRSA:
+	case attr.KeyRSA:
 		return newRSAPrivateKey(o)
 	default:
 		return nil, fmt.Errorf("pkcs11: unsupported key type: %v", kt.Value)
@@ -811,12 +790,12 @@ func (o *Object) PrivateKey() (PrivateKey, error) {
 //	x509Cert, err := cert.X509()
 type Certificate struct {
 	o *Object
-	t CertificateType
+	t attr.CertType
 }
 
 // Type returns the format of the underlying certificate.
-func (c *Certificate) Type() CertificateType {
-	return CertificateType(c.t)
+func (c *Certificate) Type() attr.CertType {
+	return c.t
 }
 
 func (c *Certificate) Object() *Object { return c.o }
@@ -827,11 +806,11 @@ func (c *Certificate) Object() *Object { return c.o }
 // returns an error.
 func (c *Certificate) X509() (*x509.Certificate, error) {
 	// http://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/os/pkcs11-base-v2.40-os.html#_Toc416959712
-	if c.t != CertificateX509 {
-		return nil, fmt.Errorf("pkcs11: invalid certificate type: %v", CertificateType(c.t))
+	if c.t != attr.CertificateX509 {
+		return nil, fmt.Errorf("pkcs11: invalid certificate type: %v", attr.CertType(c.t))
 	}
-	raw := NewArray[[]byte](nil)
-	if err := c.o.GetAttribute(AttributeValue, raw); err != nil {
+	var raw attr.AttrValue
+	if err := c.o.GetAttributes(&raw); err != nil {
 		return nil, err
 	}
 	cert, err := x509.ParseCertificate(raw.Value)
