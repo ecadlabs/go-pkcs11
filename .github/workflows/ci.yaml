@@ -1,0 +1,163 @@
+# Security-first CI pipeline for go-pkcs11.
+#
+# Job dependency graph:
+#   gate (fast PR gate: build, test, vet)
+#     └── deep-security (race, checkptr, testharness, govulncheck, staticcheck)
+#     └── hygiene (mod tidy/verify, go generate freshness)
+#
+# All jobs run on ubuntu-latest with least-privilege permissions.
+# Deep security checks are intentionally slower; correctness > speed.
+#
+# Branch protection: configure both "gate" matrix legs AND "deep-security"
+# as required status checks so the deep checks cannot be bypassed on PRs.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Fast PR gate ──────────────────────────────────────────────────────
+  # Core compilation and test pass. Blocks everything downstream.
+  gate:
+    name: "gate (go${{ matrix.go-version }})"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version:
+          - "1.22"    # minimum supported (runtime.Pinner, go.mod directive)
+          - "stable"  # latest stable release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "${{ matrix.go-version }}"
+          cache: true
+
+      - name: Install SoftHSM2
+        run: sudo apt-get update && sudo apt-get install -y libsofthsm2
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -require-libsofthsm2
+
+      - name: Vet
+        run: go vet ./...
+
+  # ── Deep security checks ─────────────────────────────────────────────
+  # Race detector, unsafe pointer checker, tagged harness, vuln scan,
+  # static analysis. Runs on latest stable Go only.
+  deep-security:
+    name: deep-security
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Install SoftHSM2
+        run: sudo apt-get update && sudo apt-get install -y libsofthsm2
+
+      # Race detector: catches data races in concurrent code.
+      # CGo + race detector is supported on linux/amd64.
+      - name: "Race detector: go test -race"
+        run: go test -race ./... -require-libsofthsm2
+
+      # checkptr: detects unsafe.Pointer misuse at runtime.
+      # Critical for a CGo-heavy PKCS#11 binding.
+      - name: "Unsafe pointer check: go test -gcflags=all=-d=checkptr=1"
+        run: go test -gcflags='all=-d=checkptr=1' ./... -require-libsofthsm2
+
+      # Tagged harness: cgo-based security regression tests
+      # (panic_paths_* tests that verify C memory safety invariants).
+      - name: "Tagged harness: go test -tags=testharness"
+        run: go test -tags=testharness -v ./... -require-libsofthsm2
+
+      # Static analysis: catches bugs, performance issues, simplifications.
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: "Static analysis: staticcheck"
+        run: staticcheck ./...
+
+      # Vulnerability database scan against Go dependencies.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: "Vulnerability scan: govulncheck"
+        run: govulncheck ./...
+
+  # ── Hygiene checks ───────────────────────────────────────────────────
+  # Module integrity, tidy check, generated code freshness.
+  hygiene:
+    name: hygiene
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      # Verify downloaded modules match go.sum checksums.
+      - name: "Module integrity: go mod verify"
+        run: go mod verify
+
+      # Ensure go.mod/go.sum are tidy. Fails if a developer forgot
+      # to run `go mod tidy` before committing.
+      - name: "Tidy check: go mod tidy"
+        run: |
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy' and commit the result."
+            exit 1
+          fi
+
+      # Verify generated code is up-to-date. Catches stale bindings
+      # after header or generator changes.
+      - name: "Generated code freshness: go generate"
+        run: |
+          go generate ./...
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are stale. Run 'go generate ./...' and commit the result."
+            git diff --stat
+            exit 1
+          fi
