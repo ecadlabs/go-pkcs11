@@ -1,0 +1,25 @@
+# Automated dependency updates for supply-chain hygiene.
+# Weekly cadence keeps noise manageable while catching vulnerabilities
+# before they age out of the news cycle.
+
+version: 2
+updates:
+  # Go module dependencies
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - go
+
+  # GitHub Actions versions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
