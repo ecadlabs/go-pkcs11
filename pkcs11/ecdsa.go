@@ -194,7 +194,7 @@ func newECDSAPublicKey(o *Object, oid asn1enc.ObjectIdentifier) (*ECDSAPublicKey
 		return nil, fmt.Errorf("pkcs11: error decoding EC point")
 	}
 
-	x, y := elliptic.Unmarshal(curve, pt)
+	x, y := unmarshalECPoint(curve, pt)
 	if x == nil {
 		return nil, errors.New("pkcs11: invalid EC point format")
 	}
@@ -290,7 +290,7 @@ func (s *Session) CreateECDSAPublicKey(src *ecdsa.PublicKey, attrs ...attr.Attri
 	var oidBuilder cryptobyte.Builder
 	oidBuilder.AddASN1ObjectIdentifier(oid)
 	ecParam, _ := oidBuilder.Bytes()
-	ecPoint := encodeOctetString(elliptic.Marshal(src.Curve, src.X, src.Y))
+	ecPoint := encodeOctetString(marshalECPoint(src.Curve, src.X, src.Y))
 	attrs = append(attrs,
 		attr.Class(attr.ClassPublicKey),
 		attr.KeyType(attr.KeyEC),
