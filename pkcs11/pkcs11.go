@@ -49,9 +49,9 @@ type functionList = C.CK_FUNCTION_LIST
 var ErrPublicKey = errors.New("pkcs11: no corresponding public key object found")
 var ErrNonUnique = errors.New("pkcs11: non unique public key object")
 
-// Module represents an opened shared library. By default, this package
-// requests locking support from the module, but concurrent safety may
-// depend on the underlying library.
+// Module represents an opened shared library. Callers should pass
+// OptOsLockingOk to Open() to request OS locking support from the module.
+// Concurrent safety may depend on the underlying library.
 type Module struct {
 	// mod is a pointer to the dlopen handle. Kept around to dlfree
 	// when the Module is closed.
@@ -133,6 +133,9 @@ func (m *Module) SlotIDs() ([]uint, error) {
 	var n C.CK_ULONG
 	if err := m.ft.C_GetSlotList(C.CK_FALSE, nil, &n); err != nil {
 		return nil, err
+	}
+	if n == 0 {
+		return []uint{}, nil
 	}
 
 	l := make([]C.CK_SLOT_ID, int(n))
@@ -590,6 +593,9 @@ func (o *Object) Class() attr.ObjectClass {
 }
 
 func (o *Object) GetAttributes(attributes ...attr.Attribute) error {
+	if len(attributes) == 0 {
+		return nil
+	}
 	attrs := make([]C.CK_ATTRIBUTE, len(attributes))
 	for i, a := range attributes {
 		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type())
@@ -601,10 +607,22 @@ func (o *Object) GetAttributes(attributes ...attr.Attribute) error {
 	defer pinner.Unpin()
 	for i, a := range attributes {
 		if ln := attrs[i].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION {
-			a.Allocate(int(ln))
-			ptr := a.Ptr()
-			pinner.Pin(ptr)
-			attrs[i].pValue = C.CK_VOID_PTR(ptr)
+			size := int(ln)
+			if size < 0 {
+				return fmt.Errorf("pkcs11: attribute 0x%08x: token reported invalid size %d", a.Type(), uint64(ln))
+			}
+			a.Allocate(size)
+			capacity := a.Len()
+			if size > capacity {
+				return fmt.Errorf("pkcs11: attribute 0x%08x: token reported %d bytes but destination holds %d", a.Type(), ln, capacity)
+			}
+			// Clamp to destination capacity so the token cannot overwrite
+			// adjacent memory on the second call.
+			attrs[i].ulValueLen = C.CK_ULONG(capacity)
+			if ptr := a.Ptr(); ptr != nil {
+				pinner.Pin(ptr)
+				attrs[i].pValue = C.CK_VOID_PTR(ptr)
+			}
 		}
 	}
 	return o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
@@ -678,11 +696,15 @@ func (o *Object) sign(m *C.CK_MECHANISM, digest []byte) ([]byte, error) {
 		return nil, err
 	}
 	var sigLen C.CK_ULONG
-	if err := o.slot.ft.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+	digestPtr := bytePtr(digest)
+	if err := o.slot.ft.C_Sign(o.slot.h, digestPtr, C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
 		return nil, err
 	}
+	if sigLen == 0 {
+		return nil, nil
+	}
 	sig := make([]byte, sigLen)
-	if err := o.slot.ft.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+	if err := o.slot.ft.C_Sign(o.slot.h, digestPtr, C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 	return sig[:sigLen], nil
@@ -696,11 +718,15 @@ func (o *Object) decrypt(m *C.CK_MECHANISM, ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 	var plainLen C.CK_ULONG
-	if err := o.slot.ft.C_Decrypt(o.slot.h, (*C.CK_BYTE)(&ciphertext[0]), C.CK_ULONG(len(ciphertext)), nil, &plainLen); err != nil {
+	ciphertextPtr := bytePtr(ciphertext)
+	if err := o.slot.ft.C_Decrypt(o.slot.h, ciphertextPtr, C.CK_ULONG(len(ciphertext)), nil, &plainLen); err != nil {
 		return nil, err
 	}
+	if plainLen == 0 {
+		return nil, nil
+	}
 	plainText := make([]byte, plainLen)
-	if err := o.slot.ft.C_Decrypt(o.slot.h, (*C.CK_BYTE)(&ciphertext[0]), C.CK_ULONG(len(ciphertext)), (*C.CK_BYTE)(&plainText[0]), &plainLen); err != nil {
+	if err := o.slot.ft.C_Decrypt(o.slot.h, ciphertextPtr, C.CK_ULONG(len(ciphertext)), (*C.CK_BYTE)(&plainText[0]), &plainLen); err != nil {
 		return nil, err
 	}
 	return plainText[:plainLen], nil
@@ -714,20 +740,30 @@ func (o *Object) encrypt(m *C.CK_MECHANISM, data []byte) ([]byte, error) {
 		return nil, err
 	}
 	var ciphertextLen C.CK_ULONG
-	if err := o.slot.ft.C_Encrypt(o.slot.h, (*C.CK_BYTE)(&data[0]), C.CK_ULONG(len(data)), nil, &ciphertextLen); err != nil {
+	dataPtr := bytePtr(data)
+	if err := o.slot.ft.C_Encrypt(o.slot.h, dataPtr, C.CK_ULONG(len(data)), nil, &ciphertextLen); err != nil {
 		return nil, err
 	}
+	if ciphertextLen == 0 {
+		return nil, nil
+	}
 	ciphertext := make([]byte, ciphertextLen)
-	if err := o.slot.ft.C_Encrypt(o.slot.h, (*C.CK_BYTE)(&data[0]), C.CK_ULONG(len(data)), (*C.CK_BYTE)(&ciphertext[0]), &ciphertextLen); err != nil {
+	if err := o.slot.ft.C_Encrypt(o.slot.h, dataPtr, C.CK_ULONG(len(data)), (*C.CK_BYTE)(&ciphertext[0]), &ciphertextLen); err != nil {
 		return nil, err
 	}
 	return ciphertext[:ciphertextLen], nil
 }
 
 func (o *Object) wrap(m *C.CK_MECHANISM, tgt *Object) ([]byte, error) {
+	o.slot.mtx.Lock()
+	defer o.slot.mtx.Unlock()
+
 	var wrappedLen C.CK_ULONG
 	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, nil, &wrappedLen); err != nil {
 		return nil, err
+	}
+	if wrappedLen == 0 {
+		return nil, nil
 	}
 	wrappedKey := make([]byte, wrappedLen)
 	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, (*C.CK_BYTE)(&wrappedKey[0]), &wrappedLen); err != nil {
