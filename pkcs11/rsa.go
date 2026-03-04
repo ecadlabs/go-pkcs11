@@ -128,7 +128,7 @@ func (*RSAPrivateKey) Extractable() {}
 
 var _ crypto.Decrypter = (*RSAPrivateKey)(nil)
 
-func (r *RSAPrivateKey) kt() attr.KeyTypeID { return attr.KeyRSA }
+func (r *RSAPrivateKey) kt() attr.KType { return attr.KeyRSA }
 func (r *RSAPrivateKey) pubFilter() []attr.Attribute {
 	return []attr.Attribute{
 		attr.Modulus(r.N.Bytes()),

@@ -125,7 +125,7 @@ func (e *ECDSAPrivateKey) ecParams() []byte {
 	return b.BytesOrPanic()
 }
 
-func (e *ECDSAPrivateKey) kt() attr.KeyTypeID { return attr.KeyEC }
+func (e *ECDSAPrivateKey) kt() attr.KType { return attr.KeyEC }
 func (e *ECDSAPrivateKey) pubFilter() []attr.Attribute {
 	return []attr.Attribute{attr.ECParams(e.ecParams())}
 }

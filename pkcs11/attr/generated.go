@@ -1,5 +1,4 @@
 package attr
-
 // GENERATED, DO NOT EDIT.
 
 type AttrClass struct {
@@ -319,12 +318,12 @@ func CheckValue(v Bytes) *AttrCheckValue {
 func (*AttrCheckValue) Type() Type { return TypeCheckValue }
 
 type AttrKeyType struct {
-	Scalar[KeyTypeID]
+	Scalar[KType]
 }
 
-func KeyType(v KeyTypeID) *AttrKeyType {
+func KeyType(v KType) *AttrKeyType {
 	return &AttrKeyType{
-		Scalar: Scalar[KeyTypeID]{
+		Scalar: Scalar[KType]{
 			Value: v,
 			Valid: true,
 		},
@@ -1870,3 +1869,4 @@ func VendorDefined(v Bytes) *AttrVendorDefined {
 }
 
 func (*AttrVendorDefined) Type() Type { return TypeVendorDefined }
+

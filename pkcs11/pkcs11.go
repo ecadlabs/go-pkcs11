@@ -653,7 +653,7 @@ func NewPublicKey(o *Object) (PublicKey, error) {
 	return newPublicKey(o, kt.Value)
 }
 
-func newPublicKey(o *Object, kt attr.KeyTypeID) (PublicKey, error) {
+func newPublicKey(o *Object, kt attr.KType) (PublicKey, error) {
 	switch kt {
 	case attr.KeyEC:
 		return newECDSAPublicKey(o, nil)
@@ -755,7 +755,7 @@ type PrivateKey interface {
 	Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error)
 	Object() *Object
 
-	kt() attr.KeyTypeID
+	kt() attr.KType
 	pubFilter() []attr.Attribute
 }
 
