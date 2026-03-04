@@ -1188,74 +1188,74 @@ func (c ObjectClass) String() string {
 	return fmt.Sprintf("Class(0x%08x)", uint(c))
 }
 
-type KeyTypeID C.CK_KEY_TYPE
+type KType C.CK_KEY_TYPE
 
 const (
-	KeyRSA            KeyTypeID = C.CKK_RSA
-	KeyDSA            KeyTypeID = C.CKK_DSA
-	KeyDH             KeyTypeID = C.CKK_DH
-	KeyEC             KeyTypeID = C.CKK_EC
-	KeyX9_42DH        KeyTypeID = C.CKK_X9_42_DH
-	KeyKEA            KeyTypeID = C.CKK_KEA
-	KeyGenericSecret  KeyTypeID = C.CKK_GENERIC_SECRET
-	KeyRC2            KeyTypeID = C.CKK_RC2
-	KeyRC4            KeyTypeID = C.CKK_RC4
-	KeyDES            KeyTypeID = C.CKK_DES
-	KeyDES2           KeyTypeID = C.CKK_DES2
-	KeyDES3           KeyTypeID = C.CKK_DES3
-	KeyCAST           KeyTypeID = C.CKK_CAST
-	KeyCAST3          KeyTypeID = C.CKK_CAST3
-	KeyCAST128        KeyTypeID = C.CKK_CAST128
-	KeyRC5            KeyTypeID = C.CKK_RC5
-	KeyIDEA           KeyTypeID = C.CKK_IDEA
-	KeySkipjack       KeyTypeID = C.CKK_SKIPJACK
-	KeyBATON          KeyTypeID = C.CKK_BATON
-	KeyJuniper        KeyTypeID = C.CKK_JUNIPER
-	KeyCDMF           KeyTypeID = C.CKK_CDMF
-	KeyAES            KeyTypeID = C.CKK_AES
-	KeyBlowfish       KeyTypeID = C.CKK_BLOWFISH
-	KeyTwofish        KeyTypeID = C.CKK_TWOFISH
-	KeySecurID        KeyTypeID = C.CKK_SECURID
-	KeyHOTP           KeyTypeID = C.CKK_HOTP
-	KeyACTI           KeyTypeID = C.CKK_ACTI
-	KeyCamellia       KeyTypeID = C.CKK_CAMELLIA
-	KeyARIA           KeyTypeID = C.CKK_ARIA
-	KeyMD5HMAC        KeyTypeID = C.CKK_MD5_HMAC
-	KeySHA1HMAC       KeyTypeID = C.CKK_SHA_1_HMAC
-	KeyRIPEMD128HMAC  KeyTypeID = C.CKK_RIPEMD128_HMAC
-	KeyRIPEMD160HMAC  KeyTypeID = C.CKK_RIPEMD160_HMAC
-	KeySHA256HMAC     KeyTypeID = C.CKK_SHA256_HMAC
-	KeySHA384HMAC     KeyTypeID = C.CKK_SHA384_HMAC
-	KeySHA512HMAC     KeyTypeID = C.CKK_SHA512_HMAC
-	KeySHA224HMAC     KeyTypeID = C.CKK_SHA224_HMAC
-	KeySeed           KeyTypeID = C.CKK_SEED
-	KeyGOSTR3410      KeyTypeID = C.CKK_GOSTR3410
-	KeyGOSTR3411      KeyTypeID = C.CKK_GOSTR3411
-	KeyGOST28147      KeyTypeID = C.CKK_GOST28147
-	KeyChaCha20       KeyTypeID = C.CKK_CHACHA20
-	KeyPoly1305       KeyTypeID = C.CKK_POLY1305
-	KeyAESXTS         KeyTypeID = C.CKK_AES_XTS
-	KeySHA3_224HMAC   KeyTypeID = C.CKK_SHA3_224_HMAC
-	KeySHA3_256HMAC   KeyTypeID = C.CKK_SHA3_256_HMAC
-	KeySHA3_384HMAC   KeyTypeID = C.CKK_SHA3_384_HMAC
-	KeySHA3_512HMAC   KeyTypeID = C.CKK_SHA3_512_HMAC
-	KeyBLAKE2b160HMAC KeyTypeID = C.CKK_BLAKE2B_160_HMAC
-	KeyBLAKE2b256HMAC KeyTypeID = C.CKK_BLAKE2B_256_HMAC
-	KeyBLAKE2b384HMAC KeyTypeID = C.CKK_BLAKE2B_384_HMAC
-	KeyBLAKE2b512HMAC KeyTypeID = C.CKK_BLAKE2B_512_HMAC
-	KeySalsa20        KeyTypeID = C.CKK_SALSA20
-	KeyX2Ratchet      KeyTypeID = C.CKK_X2RATCHET
-	KeyECEdwards      KeyTypeID = C.CKK_EC_EDWARDS
-	KeyECMontgomery   KeyTypeID = C.CKK_EC_MONTGOMERY
-	KeyHKDF           KeyTypeID = C.CKK_HKDF
-	KeySHA512_224HMAC KeyTypeID = C.CKK_SHA512_224_HMAC
-	KeySHA512_256HMAC KeyTypeID = C.CKK_SHA512_256_HMAC
-	KeySHA512THMAC    KeyTypeID = C.CKK_SHA512_T_HMAC
-	KeyHSS            KeyTypeID = C.CKK_HSS
-	KeyVendorDefined  KeyTypeID = C.CKK_VENDOR_DEFINED
+	KeyRSA            KType = C.CKK_RSA
+	KeyDSA            KType = C.CKK_DSA
+	KeyDH             KType = C.CKK_DH
+	KeyEC             KType = C.CKK_EC
+	KeyX9_42DH        KType = C.CKK_X9_42_DH
+	KeyKEA            KType = C.CKK_KEA
+	KeyGenericSecret  KType = C.CKK_GENERIC_SECRET
+	KeyRC2            KType = C.CKK_RC2
+	KeyRC4            KType = C.CKK_RC4
+	KeyDES            KType = C.CKK_DES
+	KeyDES2           KType = C.CKK_DES2
+	KeyDES3           KType = C.CKK_DES3
+	KeyCAST           KType = C.CKK_CAST
+	KeyCAST3          KType = C.CKK_CAST3
+	KeyCAST128        KType = C.CKK_CAST128
+	KeyRC5            KType = C.CKK_RC5
+	KeyIDEA           KType = C.CKK_IDEA
+	KeySkipjack       KType = C.CKK_SKIPJACK
+	KeyBATON          KType = C.CKK_BATON
+	KeyJuniper        KType = C.CKK_JUNIPER
+	KeyCDMF           KType = C.CKK_CDMF
+	KeyAES            KType = C.CKK_AES
+	KeyBlowfish       KType = C.CKK_BLOWFISH
+	KeyTwofish        KType = C.CKK_TWOFISH
+	KeySecurID        KType = C.CKK_SECURID
+	KeyHOTP           KType = C.CKK_HOTP
+	KeyACTI           KType = C.CKK_ACTI
+	KeyCamellia       KType = C.CKK_CAMELLIA
+	KeyARIA           KType = C.CKK_ARIA
+	KeyMD5HMAC        KType = C.CKK_MD5_HMAC
+	KeySHA1HMAC       KType = C.CKK_SHA_1_HMAC
+	KeyRIPEMD128HMAC  KType = C.CKK_RIPEMD128_HMAC
+	KeyRIPEMD160HMAC  KType = C.CKK_RIPEMD160_HMAC
+	KeySHA256HMAC     KType = C.CKK_SHA256_HMAC
+	KeySHA384HMAC     KType = C.CKK_SHA384_HMAC
+	KeySHA512HMAC     KType = C.CKK_SHA512_HMAC
+	KeySHA224HMAC     KType = C.CKK_SHA224_HMAC
+	KeySeed           KType = C.CKK_SEED
+	KeyGOSTR3410      KType = C.CKK_GOSTR3410
+	KeyGOSTR3411      KType = C.CKK_GOSTR3411
+	KeyGOST28147      KType = C.CKK_GOST28147
+	KeyChaCha20       KType = C.CKK_CHACHA20
+	KeyPoly1305       KType = C.CKK_POLY1305
+	KeyAESXTS         KType = C.CKK_AES_XTS
+	KeySHA3_224HMAC   KType = C.CKK_SHA3_224_HMAC
+	KeySHA3_256HMAC   KType = C.CKK_SHA3_256_HMAC
+	KeySHA3_384HMAC   KType = C.CKK_SHA3_384_HMAC
+	KeySHA3_512HMAC   KType = C.CKK_SHA3_512_HMAC
+	KeyBLAKE2b160HMAC KType = C.CKK_BLAKE2B_160_HMAC
+	KeyBLAKE2b256HMAC KType = C.CKK_BLAKE2B_256_HMAC
+	KeyBLAKE2b384HMAC KType = C.CKK_BLAKE2B_384_HMAC
+	KeyBLAKE2b512HMAC KType = C.CKK_BLAKE2B_512_HMAC
+	KeySalsa20        KType = C.CKK_SALSA20
+	KeyX2Ratchet      KType = C.CKK_X2RATCHET
+	KeyECEdwards      KType = C.CKK_EC_EDWARDS
+	KeyECMontgomery   KType = C.CKK_EC_MONTGOMERY
+	KeyHKDF           KType = C.CKK_HKDF
+	KeySHA512_224HMAC KType = C.CKK_SHA512_224_HMAC
+	KeySHA512_256HMAC KType = C.CKK_SHA512_256_HMAC
+	KeySHA512THMAC    KType = C.CKK_SHA512_T_HMAC
+	KeyHSS            KType = C.CKK_HSS
+	KeyVendorDefined  KType = C.CKK_VENDOR_DEFINED
 )
 
-var ktStr = map[KeyTypeID]string{
+var ktStr = map[KType]string{
 	KeyRSA:            "CKK_RSA",
 	KeyDSA:            "CKK_DSA",
 	KeyDH:             "CKK_DH",
@@ -1320,7 +1320,7 @@ var ktStr = map[KeyTypeID]string{
 	KeyVendorDefined:  "CKK_VENDOR_DEFINED",
 }
 
-func (k KeyTypeID) String() string {
+func (k KType) String() string {
 	if s, ok := ktStr[k]; ok {
 		return s
 	}

@@ -80,7 +80,7 @@ func (e *Ed25519PrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerO
 
 func (*Ed25519PrivateKey) Extractable() {}
 
-func (e *Ed25519PrivateKey) kt() attr.KeyTypeID { return attr.KeyECEdwards }
+func (e *Ed25519PrivateKey) kt() attr.KType { return attr.KeyECEdwards }
 func (e *Ed25519PrivateKey) pubFilter() []attr.Attribute {
 	return []attr.Attribute{attr.ECParams(encodePrintable(ed25519Curve))}
 }
