@@ -286,12 +286,14 @@ func (s *Session) GenerateRSAKeyPair(bits, exp int, pubOpt, privOpt []attr.Attri
 		privH C.CK_OBJECT_HANDLE
 	)
 
+	s.mtx.Lock()
 	err := s.ft.C_GenerateKeyPair(
 		s.h, &mechanism,
 		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
 		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
 		&pubH, &privH,
 	)
+	s.mtx.Unlock()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -332,7 +334,10 @@ func (s *Session) CreateRSAPublicKey(src *rsa.PublicKey, opt ...attr.Attribute) 
 	tpl := buildTemplate(opt, &pinner)
 
 	var handle C.CK_OBJECT_HANDLE
-	if err := s.ft.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle); err != nil {
+	s.mtx.Lock()
+	err := s.ft.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle)
+	s.mtx.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	obj, err := s.newObject(handle)
