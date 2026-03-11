@@ -56,11 +56,22 @@ func encodeOctetString(src []byte) []byte {
 	return b.BytesOrPanic()
 }
 
+// bytePtr returns a CK_BYTE pointer to the first element of buf, or nil if
+// buf is empty. Prevents index-out-of-range panics at the C boundary.
+func bytePtr(buf []byte) *C.CK_BYTE {
+	if len(buf) == 0 {
+		return nil
+	}
+	return (*C.CK_BYTE)(&buf[0])
+}
+
 func buildTemplate(attrs []attr.Attribute, pinner *runtime.Pinner) []C.CK_ATTRIBUTE {
 	out := make([]C.CK_ATTRIBUTE, len(attrs))
 	for i, a := range attrs {
 		p := a.Ptr()
-		pinner.Pin(p)
+		if p != nil {
+			pinner.Pin(p)
+		}
 		out[i] = C.CK_ATTRIBUTE{
 			_type:      C.CK_ATTRIBUTE_TYPE(a.Type()),
 			pValue:     C.CK_VOID_PTR(p),

@@ -27,8 +27,12 @@ package pkcs11
 #define CKR_DLOPEN (CKR_VENDOR_DEFINED | 1UL)
 #define CKR_DLSYM (CKR_VENDOR_DEFINED | 2UL)
 
+// RTLD_NOW: resolve all symbols at load time so missing symbols surface here
+// rather than mid-operation on an HSM. RTLD_LOCAL: prevent the loaded module
+// from polluting the global symbol namespace, which matters when multiple
+// PKCS#11 libraries are loaded in the same process.
 CK_RV open_library(const char *path, void **module, CK_FUNCTION_LIST **p) {
-	*module = dlopen(path, RTLD_LAZY);
+	*module = dlopen(path, RTLD_NOW | RTLD_LOCAL);
 	if (*module == NULL) {
 		return CKR_DLOPEN;
 	}

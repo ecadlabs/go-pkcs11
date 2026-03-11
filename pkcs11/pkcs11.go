@@ -49,9 +49,14 @@ type functionList = C.CK_FUNCTION_LIST
 var ErrPublicKey = errors.New("pkcs11: no corresponding public key object found")
 var ErrNonUnique = errors.New("pkcs11: non unique public key object")
 
-// Module represents an opened shared library. By default, this package
-// requests locking support from the module, but concurrent safety may
-// depend on the underlying library.
+// maxTokenAlloc is the largest buffer we'll allocate based on a token-reported
+// size. Prevents a malicious or buggy HSM from triggering OOM via multi-MB
+// size claims. 1MB is wildly generous (RSA-8192 sigs are 1024 bytes).
+const maxTokenAlloc = 1 << 20
+
+// Module represents an opened shared library. Callers should pass
+// OptOsLockingOk to Open() to request OS locking support from the module.
+// Concurrent safety may depend on the underlying library.
 type Module struct {
 	// mod is a pointer to the dlopen handle. Kept around to dlfree
 	// when the Module is closed.
@@ -127,6 +132,10 @@ func (m *Module) Close() error {
 	return m.mod.close()
 }
 
+// maxSlotCount caps the number of slots we'll allocate for. Prevents a
+// malicious module from triggering OOM via a huge reported count.
+const maxSlotCount = 1024
+
 // SlotIDs returns the IDs of all slots associated with this module, including
 // ones that haven't been initialized.
 func (m *Module) SlotIDs() ([]uint, error) {
@@ -134,17 +143,34 @@ func (m *Module) SlotIDs() ([]uint, error) {
 	if err := m.ft.C_GetSlotList(C.CK_FALSE, nil, &n); err != nil {
 		return nil, err
 	}
-
-	l := make([]C.CK_SLOT_ID, int(n))
-	if err := m.ft.C_GetSlotList(C.CK_FALSE, &l[0], &n); err != nil {
-		return nil, err
+	if n == 0 {
+		return []uint{}, nil
 	}
 
-	ids := make([]uint, len(l))
-	for i, id := range l {
-		ids[i] = uint(id)
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if n == 0 {
+			return []uint{}, nil
+		}
+		if n > maxSlotCount {
+			return nil, fmt.Errorf("pkcs11: module reported %d slots, exceeds safety limit of %d", n, maxSlotCount)
+		}
+		l := make([]C.CK_SLOT_ID, int(n))
+		if err := m.ft.C_GetSlotList(C.CK_FALSE, &l[0], &n); err != nil {
+			if errors.Is(err, ErrBufferTooSmall) {
+				// Slot count grew between calls; n now holds the
+				// updated count. Retry with the larger buffer.
+				continue
+			}
+			return nil, err
+		}
+		ids := make([]uint, int(n))
+		for i := 0; i < int(n); i++ {
+			ids[i] = uint(l[i])
+		}
+		return ids, nil
 	}
-	return ids, nil
+	return nil, errors.New("pkcs11: C_GetSlotList keeps returning CKR_BUFFER_TOO_SMALL")
 }
 
 // Version holds a major and minor version.
@@ -514,8 +540,10 @@ func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) 
 		attrs = buildTemplate(filter, &pinner)
 	}
 
+	// Hold the lock for the entire find sequence (Init + FindObjects +
+	// Final), then release before newObject calls which acquire the lock
+	// themselves via GetAttributes.
 	s.mtx.Lock()
-	defer s.mtx.Unlock()
 
 	if attrs != nil {
 		err = s.ft.C_FindObjectsInit(s.h, &attrs[0], C.CK_ULONG(len(attrs)))
@@ -523,13 +551,9 @@ func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) 
 		err = s.ft.C_FindObjectsInit(s.h, nil, 0)
 	}
 	if err != nil {
+		s.mtx.Unlock()
 		return nil, err
 	}
-	defer func() {
-		if ferr := s.ft.C_FindObjectsFinal(s.h); ferr != nil && err == nil {
-			err = ferr
-		}
-	}()
 
 	var handles []C.CK_OBJECT_HANDLE
 	const objectsAtATime = 16
@@ -537,12 +561,21 @@ func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) 
 		cObjHandles := make([]C.CK_OBJECT_HANDLE, objectsAtATime)
 		var n C.CK_ULONG
 		if err := s.ft.C_FindObjects(s.h, &cObjHandles[0], C.CK_ULONG(objectsAtATime), &n); err != nil {
+			s.ft.C_FindObjectsFinal(s.h)
+			s.mtx.Unlock()
 			return nil, err
 		}
 		if n == 0 {
 			break
 		}
 		handles = append(handles, cObjHandles[:int(n)]...)
+	}
+
+	ferr := s.ft.C_FindObjectsFinal(s.h)
+	s.mtx.Unlock()
+
+	if ferr != nil {
+		return nil, ferr
 	}
 
 	for _, h := range handles {
@@ -590,6 +623,13 @@ func (o *Object) Class() attr.ObjectClass {
 }
 
 func (o *Object) GetAttributes(attributes ...attr.Attribute) error {
+	if len(attributes) == 0 {
+		return nil
+	}
+
+	o.slot.mtx.Lock()
+	defer o.slot.mtx.Unlock()
+
 	attrs := make([]C.CK_ATTRIBUTE, len(attributes))
 	for i, a := range attributes {
 		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type())
@@ -601,10 +641,22 @@ func (o *Object) GetAttributes(attributes ...attr.Attribute) error {
 	defer pinner.Unpin()
 	for i, a := range attributes {
 		if ln := attrs[i].ulValueLen; ln != C.CK_UNAVAILABLE_INFORMATION {
-			a.Allocate(int(ln))
-			ptr := a.Ptr()
-			pinner.Pin(ptr)
-			attrs[i].pValue = C.CK_VOID_PTR(ptr)
+			if ln > maxTokenAlloc {
+				return fmt.Errorf("pkcs11: attribute 0x%08x: token reported %d bytes, exceeds safety limit of %d", a.Type(), uint64(ln), maxTokenAlloc)
+			}
+			size := int(ln)
+			a.Allocate(size)
+			capacity := a.Len()
+			if size > capacity {
+				return fmt.Errorf("pkcs11: attribute 0x%08x: token reported %d bytes but destination holds %d", a.Type(), ln, capacity)
+			}
+			// Clamp to destination capacity so the token cannot overwrite
+			// adjacent memory on the second call.
+			attrs[i].ulValueLen = C.CK_ULONG(capacity)
+			if ptr := a.Ptr(); ptr != nil {
+				pinner.Pin(ptr)
+				attrs[i].pValue = C.CK_VOID_PTR(ptr)
+			}
 		}
 	}
 	return o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
@@ -678,11 +730,18 @@ func (o *Object) sign(m *C.CK_MECHANISM, digest []byte) ([]byte, error) {
 		return nil, err
 	}
 	var sigLen C.CK_ULONG
-	if err := o.slot.ft.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+	digestPtr := bytePtr(digest)
+	if err := o.slot.ft.C_Sign(o.slot.h, digestPtr, C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
 		return nil, err
 	}
+	if sigLen == 0 {
+		return nil, nil
+	}
+	if sigLen > maxTokenAlloc {
+		return nil, fmt.Errorf("pkcs11: token reported signature length %d bytes, exceeds safety limit of %d", sigLen, maxTokenAlloc)
+	}
 	sig := make([]byte, sigLen)
-	if err := o.slot.ft.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+	if err := o.slot.ft.C_Sign(o.slot.h, digestPtr, C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 	return sig[:sigLen], nil
@@ -696,11 +755,18 @@ func (o *Object) decrypt(m *C.CK_MECHANISM, ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 	var plainLen C.CK_ULONG
-	if err := o.slot.ft.C_Decrypt(o.slot.h, (*C.CK_BYTE)(&ciphertext[0]), C.CK_ULONG(len(ciphertext)), nil, &plainLen); err != nil {
+	ciphertextPtr := bytePtr(ciphertext)
+	if err := o.slot.ft.C_Decrypt(o.slot.h, ciphertextPtr, C.CK_ULONG(len(ciphertext)), nil, &plainLen); err != nil {
 		return nil, err
 	}
+	if plainLen == 0 {
+		return nil, nil
+	}
+	if plainLen > maxTokenAlloc {
+		return nil, fmt.Errorf("pkcs11: token reported plaintext length %d bytes, exceeds safety limit of %d", plainLen, maxTokenAlloc)
+	}
 	plainText := make([]byte, plainLen)
-	if err := o.slot.ft.C_Decrypt(o.slot.h, (*C.CK_BYTE)(&ciphertext[0]), C.CK_ULONG(len(ciphertext)), (*C.CK_BYTE)(&plainText[0]), &plainLen); err != nil {
+	if err := o.slot.ft.C_Decrypt(o.slot.h, ciphertextPtr, C.CK_ULONG(len(ciphertext)), (*C.CK_BYTE)(&plainText[0]), &plainLen); err != nil {
 		return nil, err
 	}
 	return plainText[:plainLen], nil
@@ -714,20 +780,36 @@ func (o *Object) encrypt(m *C.CK_MECHANISM, data []byte) ([]byte, error) {
 		return nil, err
 	}
 	var ciphertextLen C.CK_ULONG
-	if err := o.slot.ft.C_Encrypt(o.slot.h, (*C.CK_BYTE)(&data[0]), C.CK_ULONG(len(data)), nil, &ciphertextLen); err != nil {
+	dataPtr := bytePtr(data)
+	if err := o.slot.ft.C_Encrypt(o.slot.h, dataPtr, C.CK_ULONG(len(data)), nil, &ciphertextLen); err != nil {
 		return nil, err
 	}
+	if ciphertextLen == 0 {
+		return nil, nil
+	}
+	if ciphertextLen > maxTokenAlloc {
+		return nil, fmt.Errorf("pkcs11: token reported ciphertext length %d bytes, exceeds safety limit of %d", ciphertextLen, maxTokenAlloc)
+	}
 	ciphertext := make([]byte, ciphertextLen)
-	if err := o.slot.ft.C_Encrypt(o.slot.h, (*C.CK_BYTE)(&data[0]), C.CK_ULONG(len(data)), (*C.CK_BYTE)(&ciphertext[0]), &ciphertextLen); err != nil {
+	if err := o.slot.ft.C_Encrypt(o.slot.h, dataPtr, C.CK_ULONG(len(data)), (*C.CK_BYTE)(&ciphertext[0]), &ciphertextLen); err != nil {
 		return nil, err
 	}
 	return ciphertext[:ciphertextLen], nil
 }
 
 func (o *Object) wrap(m *C.CK_MECHANISM, tgt *Object) ([]byte, error) {
+	o.slot.mtx.Lock()
+	defer o.slot.mtx.Unlock()
+
 	var wrappedLen C.CK_ULONG
 	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, nil, &wrappedLen); err != nil {
 		return nil, err
+	}
+	if wrappedLen == 0 {
+		return nil, nil
+	}
+	if wrappedLen > maxTokenAlloc {
+		return nil, fmt.Errorf("pkcs11: token reported wrapped key length %d bytes, exceeds safety limit of %d", wrappedLen, maxTokenAlloc)
 	}
 	wrappedKey := make([]byte, wrappedLen)
 	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, (*C.CK_BYTE)(&wrappedKey[0]), &wrappedLen); err != nil {

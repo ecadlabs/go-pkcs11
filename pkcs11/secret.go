@@ -34,7 +34,10 @@ func (s *Session) GenerateGenericSecretKey(keyLen int, opt ...attr.Attribute) (*
 		mechanism: C.CKM_GENERIC_SECRET_KEY_GEN,
 	}
 	var handle C.CK_OBJECT_HANDLE
-	if err := s.ft.C_GenerateKey(s.h, &mechanism, &tpl[0], C.CK_ULONG(len(tpl)), &handle); err != nil {
+	s.mtx.Lock()
+	err := s.ft.C_GenerateKey(s.h, &mechanism, &tpl[0], C.CK_ULONG(len(tpl)), &handle)
+	s.mtx.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	obj, err := s.newObject(handle)
@@ -69,7 +72,10 @@ func (s *Session) GenerateAESSecretKey(keyLen int, opt ...attr.Attribute) (*AESS
 		mechanism: C.CKM_AES_KEY_GEN,
 	}
 	var handle C.CK_OBJECT_HANDLE
-	if err := s.ft.C_GenerateKey(s.h, &mechanism, &tpl[0], C.CK_ULONG(len(tpl)), &handle); err != nil {
+	s.mtx.Lock()
+	err := s.ft.C_GenerateKey(s.h, &mechanism, &tpl[0], C.CK_ULONG(len(tpl)), &handle)
+	s.mtx.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	obj, err := s.newObject(handle)

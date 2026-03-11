@@ -153,12 +153,14 @@ func (s *Session) GenerateEd25519KeyPair(pubOpt, privOpt []attr.Attribute) (*Ed2
 		privH C.CK_OBJECT_HANDLE
 	)
 
+	s.mtx.Lock()
 	err := s.ft.C_GenerateKeyPair(
 		s.h, &mechanism,
 		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
 		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
 		&pubH, &privH,
 	)
+	s.mtx.Unlock()
 
 	if err != nil {
 		return nil, nil, err
@@ -210,7 +212,10 @@ func (s *Session) CreateEd25519PublicKey(src ed25519.PublicKey, opt ...attr.Attr
 	tpl := buildTemplate(opt, &pinner)
 
 	var handle C.CK_OBJECT_HANDLE
-	if err := s.ft.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle); err != nil {
+	s.mtx.Lock()
+	err := s.ft.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle)
+	s.mtx.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	obj, err := s.newObject(handle)
