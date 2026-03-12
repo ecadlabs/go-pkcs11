@@ -957,12 +957,387 @@ CK_RV _C_WaitForSlotEvent(
 */
 import "C"
 
-type functionTable struct {
+type pkcs11API interface {
+    C_Initialize(
+    	pInitArgs C.CK_VOID_PTR,
+    ) error
+    C_Finalize(
+    	pReserved C.CK_VOID_PTR,
+    ) error
+    C_GetInfo(
+    	pInfo C.CK_INFO_PTR,
+    ) error
+    C_GetFunctionList(
+    	ppFunctionList C.CK_FUNCTION_LIST_PTR_PTR,
+    ) error
+    C_GetSlotList(
+    	tokenPresent C.CK_BBOOL,
+    	pSlotList C.CK_SLOT_ID_PTR,
+    	pulCount C.CK_ULONG_PTR,
+    ) error
+    C_GetSlotInfo(
+    	slotID C.CK_SLOT_ID,
+    	pInfo C.CK_SLOT_INFO_PTR,
+    ) error
+    C_GetTokenInfo(
+    	slotID C.CK_SLOT_ID,
+    	pInfo C.CK_TOKEN_INFO_PTR,
+    ) error
+    C_GetMechanismList(
+    	slotID C.CK_SLOT_ID,
+    	pMechanismList C.CK_MECHANISM_TYPE_PTR,
+    	pulCount C.CK_ULONG_PTR,
+    ) error
+    C_GetMechanismInfo(
+    	slotID C.CK_SLOT_ID,
+    	_type C.CK_MECHANISM_TYPE,
+    	pInfo C.CK_MECHANISM_INFO_PTR,
+    ) error
+    C_InitToken(
+    	slotID C.CK_SLOT_ID,
+    	pPin C.CK_UTF8CHAR_PTR,
+    	ulPinLen C.CK_ULONG,
+    	pLabel C.CK_UTF8CHAR_PTR,
+    ) error
+    C_InitPIN(
+    	hSession C.CK_SESSION_HANDLE,
+    	pPin C.CK_UTF8CHAR_PTR,
+    	ulPinLen C.CK_ULONG,
+    ) error
+    C_SetPIN(
+    	hSession C.CK_SESSION_HANDLE,
+    	pOldPin C.CK_UTF8CHAR_PTR,
+    	ulOldLen C.CK_ULONG,
+    	pNewPin C.CK_UTF8CHAR_PTR,
+    	ulNewLen C.CK_ULONG,
+    ) error
+    C_OpenSession(
+    	slotID C.CK_SLOT_ID,
+    	flags C.CK_FLAGS,
+    	pApplication C.CK_VOID_PTR,
+    	Notify C.CK_NOTIFY,
+    	phSession C.CK_SESSION_HANDLE_PTR,
+    ) error
+    C_CloseSession(
+    	hSession C.CK_SESSION_HANDLE,
+    ) error
+    C_CloseAllSessions(
+    	slotID C.CK_SLOT_ID,
+    ) error
+    C_GetSessionInfo(
+    	hSession C.CK_SESSION_HANDLE,
+    	pInfo C.CK_SESSION_INFO_PTR,
+    ) error
+    C_GetOperationState(
+    	hSession C.CK_SESSION_HANDLE,
+    	pOperationState C.CK_BYTE_PTR,
+    	pulOperationStateLen C.CK_ULONG_PTR,
+    ) error
+    C_SetOperationState(
+    	hSession C.CK_SESSION_HANDLE,
+    	pOperationState C.CK_BYTE_PTR,
+    	ulOperationStateLen C.CK_ULONG,
+    	hEncryptionKey C.CK_OBJECT_HANDLE,
+    	hAuthenticationKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_Login(
+    	hSession C.CK_SESSION_HANDLE,
+    	userType C.CK_USER_TYPE,
+    	pPin C.CK_UTF8CHAR_PTR,
+    	ulPinLen C.CK_ULONG,
+    ) error
+    C_Logout(
+    	hSession C.CK_SESSION_HANDLE,
+    ) error
+    C_CreateObject(
+    	hSession C.CK_SESSION_HANDLE,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulCount C.CK_ULONG,
+    	phObject C.CK_OBJECT_HANDLE_PTR,
+    ) error
+    C_CopyObject(
+    	hSession C.CK_SESSION_HANDLE,
+    	hObject C.CK_OBJECT_HANDLE,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulCount C.CK_ULONG,
+    	phNewObject C.CK_OBJECT_HANDLE_PTR,
+    ) error
+    C_DestroyObject(
+    	hSession C.CK_SESSION_HANDLE,
+    	hObject C.CK_OBJECT_HANDLE,
+    ) error
+    C_GetObjectSize(
+    	hSession C.CK_SESSION_HANDLE,
+    	hObject C.CK_OBJECT_HANDLE,
+    	pulSize C.CK_ULONG_PTR,
+    ) error
+    C_GetAttributeValue(
+    	hSession C.CK_SESSION_HANDLE,
+    	hObject C.CK_OBJECT_HANDLE,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulCount C.CK_ULONG,
+    ) error
+    C_SetAttributeValue(
+    	hSession C.CK_SESSION_HANDLE,
+    	hObject C.CK_OBJECT_HANDLE,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulCount C.CK_ULONG,
+    ) error
+    C_FindObjectsInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulCount C.CK_ULONG,
+    ) error
+    C_FindObjects(
+    	hSession C.CK_SESSION_HANDLE,
+    	phObject C.CK_OBJECT_HANDLE_PTR,
+    	ulMaxObjectCount C.CK_ULONG,
+    	pulObjectCount C.CK_ULONG_PTR,
+    ) error
+    C_FindObjectsFinal(
+    	hSession C.CK_SESSION_HANDLE,
+    ) error
+    C_EncryptInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_Encrypt(
+    	hSession C.CK_SESSION_HANDLE,
+    	pData C.CK_BYTE_PTR,
+    	ulDataLen C.CK_ULONG,
+    	pEncryptedData C.CK_BYTE_PTR,
+    	pulEncryptedDataLen C.CK_ULONG_PTR,
+    ) error
+    C_EncryptUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pPart C.CK_BYTE_PTR,
+    	ulPartLen C.CK_ULONG,
+    	pEncryptedPart C.CK_BYTE_PTR,
+    	pulEncryptedPartLen C.CK_ULONG_PTR,
+    ) error
+    C_EncryptFinal(
+    	hSession C.CK_SESSION_HANDLE,
+    	pLastEncryptedPart C.CK_BYTE_PTR,
+    	pulLastEncryptedPartLen C.CK_ULONG_PTR,
+    ) error
+    C_DecryptInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_Decrypt(
+    	hSession C.CK_SESSION_HANDLE,
+    	pEncryptedData C.CK_BYTE_PTR,
+    	ulEncryptedDataLen C.CK_ULONG,
+    	pData C.CK_BYTE_PTR,
+    	pulDataLen C.CK_ULONG_PTR,
+    ) error
+    C_DecryptUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pEncryptedPart C.CK_BYTE_PTR,
+    	ulEncryptedPartLen C.CK_ULONG,
+    	pPart C.CK_BYTE_PTR,
+    	pulPartLen C.CK_ULONG_PTR,
+    ) error
+    C_DecryptFinal(
+    	hSession C.CK_SESSION_HANDLE,
+    	pLastPart C.CK_BYTE_PTR,
+    	pulLastPartLen C.CK_ULONG_PTR,
+    ) error
+    C_DigestInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    ) error
+    C_Digest(
+    	hSession C.CK_SESSION_HANDLE,
+    	pData C.CK_BYTE_PTR,
+    	ulDataLen C.CK_ULONG,
+    	pDigest C.CK_BYTE_PTR,
+    	pulDigestLen C.CK_ULONG_PTR,
+    ) error
+    C_DigestUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pPart C.CK_BYTE_PTR,
+    	ulPartLen C.CK_ULONG,
+    ) error
+    C_DigestKey(
+    	hSession C.CK_SESSION_HANDLE,
+    	hKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_DigestFinal(
+    	hSession C.CK_SESSION_HANDLE,
+    	pDigest C.CK_BYTE_PTR,
+    	pulDigestLen C.CK_ULONG_PTR,
+    ) error
+    C_SignInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_Sign(
+    	hSession C.CK_SESSION_HANDLE,
+    	pData C.CK_BYTE_PTR,
+    	ulDataLen C.CK_ULONG,
+    	pSignature C.CK_BYTE_PTR,
+    	pulSignatureLen C.CK_ULONG_PTR,
+    ) error
+    C_SignUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pPart C.CK_BYTE_PTR,
+    	ulPartLen C.CK_ULONG,
+    ) error
+    C_SignFinal(
+    	hSession C.CK_SESSION_HANDLE,
+    	pSignature C.CK_BYTE_PTR,
+    	pulSignatureLen C.CK_ULONG_PTR,
+    ) error
+    C_SignRecoverInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_SignRecover(
+    	hSession C.CK_SESSION_HANDLE,
+    	pData C.CK_BYTE_PTR,
+    	ulDataLen C.CK_ULONG,
+    	pSignature C.CK_BYTE_PTR,
+    	pulSignatureLen C.CK_ULONG_PTR,
+    ) error
+    C_VerifyInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_Verify(
+    	hSession C.CK_SESSION_HANDLE,
+    	pData C.CK_BYTE_PTR,
+    	ulDataLen C.CK_ULONG,
+    	pSignature C.CK_BYTE_PTR,
+    	ulSignatureLen C.CK_ULONG,
+    ) error
+    C_VerifyUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pPart C.CK_BYTE_PTR,
+    	ulPartLen C.CK_ULONG,
+    ) error
+    C_VerifyFinal(
+    	hSession C.CK_SESSION_HANDLE,
+    	pSignature C.CK_BYTE_PTR,
+    	ulSignatureLen C.CK_ULONG,
+    ) error
+    C_VerifyRecoverInit(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hKey C.CK_OBJECT_HANDLE,
+    ) error
+    C_VerifyRecover(
+    	hSession C.CK_SESSION_HANDLE,
+    	pSignature C.CK_BYTE_PTR,
+    	ulSignatureLen C.CK_ULONG,
+    	pData C.CK_BYTE_PTR,
+    	pulDataLen C.CK_ULONG_PTR,
+    ) error
+    C_DigestEncryptUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pPart C.CK_BYTE_PTR,
+    	ulPartLen C.CK_ULONG,
+    	pEncryptedPart C.CK_BYTE_PTR,
+    	pulEncryptedPartLen C.CK_ULONG_PTR,
+    ) error
+    C_DecryptDigestUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pEncryptedPart C.CK_BYTE_PTR,
+    	ulEncryptedPartLen C.CK_ULONG,
+    	pPart C.CK_BYTE_PTR,
+    	pulPartLen C.CK_ULONG_PTR,
+    ) error
+    C_SignEncryptUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pPart C.CK_BYTE_PTR,
+    	ulPartLen C.CK_ULONG,
+    	pEncryptedPart C.CK_BYTE_PTR,
+    	pulEncryptedPartLen C.CK_ULONG_PTR,
+    ) error
+    C_DecryptVerifyUpdate(
+    	hSession C.CK_SESSION_HANDLE,
+    	pEncryptedPart C.CK_BYTE_PTR,
+    	ulEncryptedPartLen C.CK_ULONG,
+    	pPart C.CK_BYTE_PTR,
+    	pulPartLen C.CK_ULONG_PTR,
+    ) error
+    C_GenerateKey(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulCount C.CK_ULONG,
+    	phKey C.CK_OBJECT_HANDLE_PTR,
+    ) error
+    C_GenerateKeyPair(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	pPublicKeyTemplate C.CK_ATTRIBUTE_PTR,
+    	ulPublicKeyAttributeCount C.CK_ULONG,
+    	pPrivateKeyTemplate C.CK_ATTRIBUTE_PTR,
+    	ulPrivateKeyAttributeCount C.CK_ULONG,
+    	phPublicKey C.CK_OBJECT_HANDLE_PTR,
+    	phPrivateKey C.CK_OBJECT_HANDLE_PTR,
+    ) error
+    C_WrapKey(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hWrappingKey C.CK_OBJECT_HANDLE,
+    	hKey C.CK_OBJECT_HANDLE,
+    	pWrappedKey C.CK_BYTE_PTR,
+    	pulWrappedKeyLen C.CK_ULONG_PTR,
+    ) error
+    C_UnwrapKey(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hUnwrappingKey C.CK_OBJECT_HANDLE,
+    	pWrappedKey C.CK_BYTE_PTR,
+    	ulWrappedKeyLen C.CK_ULONG,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulAttributeCount C.CK_ULONG,
+    	phKey C.CK_OBJECT_HANDLE_PTR,
+    ) error
+    C_DeriveKey(
+    	hSession C.CK_SESSION_HANDLE,
+    	pMechanism C.CK_MECHANISM_PTR,
+    	hBaseKey C.CK_OBJECT_HANDLE,
+    	pTemplate C.CK_ATTRIBUTE_PTR,
+    	ulAttributeCount C.CK_ULONG,
+    	phKey C.CK_OBJECT_HANDLE_PTR,
+    ) error
+    C_SeedRandom(
+    	hSession C.CK_SESSION_HANDLE,
+    	pSeed C.CK_BYTE_PTR,
+    	ulSeedLen C.CK_ULONG,
+    ) error
+    C_GenerateRandom(
+    	hSession C.CK_SESSION_HANDLE,
+    	RandomData C.CK_BYTE_PTR,
+    	ulRandomLen C.CK_ULONG,
+    ) error
+    C_GetFunctionStatus(
+    	hSession C.CK_SESSION_HANDLE,
+    ) error
+    C_CancelFunction(
+    	hSession C.CK_SESSION_HANDLE,
+    ) error
+    C_WaitForSlotEvent(
+    	flags C.CK_FLAGS,
+    	pSlot C.CK_SLOT_ID_PTR,
+    	pRserved C.CK_VOID_PTR,
+    ) error
+}
+
+type pkcs11CAPIWrapper struct {
 	t *C.CK_FUNCTION_LIST
 }
 
 
-func (f *functionTable) C_Initialize(
+func (f pkcs11CAPIWrapper) C_Initialize(
 	pInitArgs C.CK_VOID_PTR,
 ) error {
 	rv := C._C_Initialize(
@@ -975,7 +1350,7 @@ func (f *functionTable) C_Initialize(
 	return nil
 }
 
-func (f *functionTable) C_Finalize(
+func (f pkcs11CAPIWrapper) C_Finalize(
 	pReserved C.CK_VOID_PTR,
 ) error {
 	rv := C._C_Finalize(
@@ -988,7 +1363,7 @@ func (f *functionTable) C_Finalize(
 	return nil
 }
 
-func (f *functionTable) C_GetInfo(
+func (f pkcs11CAPIWrapper) C_GetInfo(
 	pInfo C.CK_INFO_PTR,
 ) error {
 	rv := C._C_GetInfo(
@@ -1001,7 +1376,7 @@ func (f *functionTable) C_GetInfo(
 	return nil
 }
 
-func (f *functionTable) C_GetFunctionList(
+func (f pkcs11CAPIWrapper) C_GetFunctionList(
 	ppFunctionList C.CK_FUNCTION_LIST_PTR_PTR,
 ) error {
 	rv := C._C_GetFunctionList(
@@ -1014,7 +1389,7 @@ func (f *functionTable) C_GetFunctionList(
 	return nil
 }
 
-func (f *functionTable) C_GetSlotList(
+func (f pkcs11CAPIWrapper) C_GetSlotList(
 	tokenPresent C.CK_BBOOL,
 	pSlotList C.CK_SLOT_ID_PTR,
 	pulCount C.CK_ULONG_PTR,
@@ -1031,7 +1406,7 @@ func (f *functionTable) C_GetSlotList(
 	return nil
 }
 
-func (f *functionTable) C_GetSlotInfo(
+func (f pkcs11CAPIWrapper) C_GetSlotInfo(
 	slotID C.CK_SLOT_ID,
 	pInfo C.CK_SLOT_INFO_PTR,
 ) error {
@@ -1046,7 +1421,7 @@ func (f *functionTable) C_GetSlotInfo(
 	return nil
 }
 
-func (f *functionTable) C_GetTokenInfo(
+func (f pkcs11CAPIWrapper) C_GetTokenInfo(
 	slotID C.CK_SLOT_ID,
 	pInfo C.CK_TOKEN_INFO_PTR,
 ) error {
@@ -1061,7 +1436,7 @@ func (f *functionTable) C_GetTokenInfo(
 	return nil
 }
 
-func (f *functionTable) C_GetMechanismList(
+func (f pkcs11CAPIWrapper) C_GetMechanismList(
 	slotID C.CK_SLOT_ID,
 	pMechanismList C.CK_MECHANISM_TYPE_PTR,
 	pulCount C.CK_ULONG_PTR,
@@ -1078,7 +1453,7 @@ func (f *functionTable) C_GetMechanismList(
 	return nil
 }
 
-func (f *functionTable) C_GetMechanismInfo(
+func (f pkcs11CAPIWrapper) C_GetMechanismInfo(
 	slotID C.CK_SLOT_ID,
 	_type C.CK_MECHANISM_TYPE,
 	pInfo C.CK_MECHANISM_INFO_PTR,
@@ -1095,7 +1470,7 @@ func (f *functionTable) C_GetMechanismInfo(
 	return nil
 }
 
-func (f *functionTable) C_InitToken(
+func (f pkcs11CAPIWrapper) C_InitToken(
 	slotID C.CK_SLOT_ID,
 	pPin C.CK_UTF8CHAR_PTR,
 	ulPinLen C.CK_ULONG,
@@ -1114,7 +1489,7 @@ func (f *functionTable) C_InitToken(
 	return nil
 }
 
-func (f *functionTable) C_InitPIN(
+func (f pkcs11CAPIWrapper) C_InitPIN(
 	hSession C.CK_SESSION_HANDLE,
 	pPin C.CK_UTF8CHAR_PTR,
 	ulPinLen C.CK_ULONG,
@@ -1131,7 +1506,7 @@ func (f *functionTable) C_InitPIN(
 	return nil
 }
 
-func (f *functionTable) C_SetPIN(
+func (f pkcs11CAPIWrapper) C_SetPIN(
 	hSession C.CK_SESSION_HANDLE,
 	pOldPin C.CK_UTF8CHAR_PTR,
 	ulOldLen C.CK_ULONG,
@@ -1152,7 +1527,7 @@ func (f *functionTable) C_SetPIN(
 	return nil
 }
 
-func (f *functionTable) C_OpenSession(
+func (f pkcs11CAPIWrapper) C_OpenSession(
 	slotID C.CK_SLOT_ID,
 	flags C.CK_FLAGS,
 	pApplication C.CK_VOID_PTR,
@@ -1173,7 +1548,7 @@ func (f *functionTable) C_OpenSession(
 	return nil
 }
 
-func (f *functionTable) C_CloseSession(
+func (f pkcs11CAPIWrapper) C_CloseSession(
 	hSession C.CK_SESSION_HANDLE,
 ) error {
 	rv := C._C_CloseSession(
@@ -1186,7 +1561,7 @@ func (f *functionTable) C_CloseSession(
 	return nil
 }
 
-func (f *functionTable) C_CloseAllSessions(
+func (f pkcs11CAPIWrapper) C_CloseAllSessions(
 	slotID C.CK_SLOT_ID,
 ) error {
 	rv := C._C_CloseAllSessions(
@@ -1199,7 +1574,7 @@ func (f *functionTable) C_CloseAllSessions(
 	return nil
 }
 
-func (f *functionTable) C_GetSessionInfo(
+func (f pkcs11CAPIWrapper) C_GetSessionInfo(
 	hSession C.CK_SESSION_HANDLE,
 	pInfo C.CK_SESSION_INFO_PTR,
 ) error {
@@ -1214,7 +1589,7 @@ func (f *functionTable) C_GetSessionInfo(
 	return nil
 }
 
-func (f *functionTable) C_GetOperationState(
+func (f pkcs11CAPIWrapper) C_GetOperationState(
 	hSession C.CK_SESSION_HANDLE,
 	pOperationState C.CK_BYTE_PTR,
 	pulOperationStateLen C.CK_ULONG_PTR,
@@ -1231,7 +1606,7 @@ func (f *functionTable) C_GetOperationState(
 	return nil
 }
 
-func (f *functionTable) C_SetOperationState(
+func (f pkcs11CAPIWrapper) C_SetOperationState(
 	hSession C.CK_SESSION_HANDLE,
 	pOperationState C.CK_BYTE_PTR,
 	ulOperationStateLen C.CK_ULONG,
@@ -1252,7 +1627,7 @@ func (f *functionTable) C_SetOperationState(
 	return nil
 }
 
-func (f *functionTable) C_Login(
+func (f pkcs11CAPIWrapper) C_Login(
 	hSession C.CK_SESSION_HANDLE,
 	userType C.CK_USER_TYPE,
 	pPin C.CK_UTF8CHAR_PTR,
@@ -1271,7 +1646,7 @@ func (f *functionTable) C_Login(
 	return nil
 }
 
-func (f *functionTable) C_Logout(
+func (f pkcs11CAPIWrapper) C_Logout(
 	hSession C.CK_SESSION_HANDLE,
 ) error {
 	rv := C._C_Logout(
@@ -1284,7 +1659,7 @@ func (f *functionTable) C_Logout(
 	return nil
 }
 
-func (f *functionTable) C_CreateObject(
+func (f pkcs11CAPIWrapper) C_CreateObject(
 	hSession C.CK_SESSION_HANDLE,
 	pTemplate C.CK_ATTRIBUTE_PTR,
 	ulCount C.CK_ULONG,
@@ -1303,7 +1678,7 @@ func (f *functionTable) C_CreateObject(
 	return nil
 }
 
-func (f *functionTable) C_CopyObject(
+func (f pkcs11CAPIWrapper) C_CopyObject(
 	hSession C.CK_SESSION_HANDLE,
 	hObject C.CK_OBJECT_HANDLE,
 	pTemplate C.CK_ATTRIBUTE_PTR,
@@ -1324,7 +1699,7 @@ func (f *functionTable) C_CopyObject(
 	return nil
 }
 
-func (f *functionTable) C_DestroyObject(
+func (f pkcs11CAPIWrapper) C_DestroyObject(
 	hSession C.CK_SESSION_HANDLE,
 	hObject C.CK_OBJECT_HANDLE,
 ) error {
@@ -1339,7 +1714,7 @@ func (f *functionTable) C_DestroyObject(
 	return nil
 }
 
-func (f *functionTable) C_GetObjectSize(
+func (f pkcs11CAPIWrapper) C_GetObjectSize(
 	hSession C.CK_SESSION_HANDLE,
 	hObject C.CK_OBJECT_HANDLE,
 	pulSize C.CK_ULONG_PTR,
@@ -1356,7 +1731,7 @@ func (f *functionTable) C_GetObjectSize(
 	return nil
 }
 
-func (f *functionTable) C_GetAttributeValue(
+func (f pkcs11CAPIWrapper) C_GetAttributeValue(
 	hSession C.CK_SESSION_HANDLE,
 	hObject C.CK_OBJECT_HANDLE,
 	pTemplate C.CK_ATTRIBUTE_PTR,
@@ -1375,7 +1750,7 @@ func (f *functionTable) C_GetAttributeValue(
 	return nil
 }
 
-func (f *functionTable) C_SetAttributeValue(
+func (f pkcs11CAPIWrapper) C_SetAttributeValue(
 	hSession C.CK_SESSION_HANDLE,
 	hObject C.CK_OBJECT_HANDLE,
 	pTemplate C.CK_ATTRIBUTE_PTR,
@@ -1394,7 +1769,7 @@ func (f *functionTable) C_SetAttributeValue(
 	return nil
 }
 
-func (f *functionTable) C_FindObjectsInit(
+func (f pkcs11CAPIWrapper) C_FindObjectsInit(
 	hSession C.CK_SESSION_HANDLE,
 	pTemplate C.CK_ATTRIBUTE_PTR,
 	ulCount C.CK_ULONG,
@@ -1411,7 +1786,7 @@ func (f *functionTable) C_FindObjectsInit(
 	return nil
 }
 
-func (f *functionTable) C_FindObjects(
+func (f pkcs11CAPIWrapper) C_FindObjects(
 	hSession C.CK_SESSION_HANDLE,
 	phObject C.CK_OBJECT_HANDLE_PTR,
 	ulMaxObjectCount C.CK_ULONG,
@@ -1430,7 +1805,7 @@ func (f *functionTable) C_FindObjects(
 	return nil
 }
 
-func (f *functionTable) C_FindObjectsFinal(
+func (f pkcs11CAPIWrapper) C_FindObjectsFinal(
 	hSession C.CK_SESSION_HANDLE,
 ) error {
 	rv := C._C_FindObjectsFinal(
@@ -1443,7 +1818,7 @@ func (f *functionTable) C_FindObjectsFinal(
 	return nil
 }
 
-func (f *functionTable) C_EncryptInit(
+func (f pkcs11CAPIWrapper) C_EncryptInit(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hKey C.CK_OBJECT_HANDLE,
@@ -1460,7 +1835,7 @@ func (f *functionTable) C_EncryptInit(
 	return nil
 }
 
-func (f *functionTable) C_Encrypt(
+func (f pkcs11CAPIWrapper) C_Encrypt(
 	hSession C.CK_SESSION_HANDLE,
 	pData C.CK_BYTE_PTR,
 	ulDataLen C.CK_ULONG,
@@ -1481,7 +1856,7 @@ func (f *functionTable) C_Encrypt(
 	return nil
 }
 
-func (f *functionTable) C_EncryptUpdate(
+func (f pkcs11CAPIWrapper) C_EncryptUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pPart C.CK_BYTE_PTR,
 	ulPartLen C.CK_ULONG,
@@ -1502,7 +1877,7 @@ func (f *functionTable) C_EncryptUpdate(
 	return nil
 }
 
-func (f *functionTable) C_EncryptFinal(
+func (f pkcs11CAPIWrapper) C_EncryptFinal(
 	hSession C.CK_SESSION_HANDLE,
 	pLastEncryptedPart C.CK_BYTE_PTR,
 	pulLastEncryptedPartLen C.CK_ULONG_PTR,
@@ -1519,7 +1894,7 @@ func (f *functionTable) C_EncryptFinal(
 	return nil
 }
 
-func (f *functionTable) C_DecryptInit(
+func (f pkcs11CAPIWrapper) C_DecryptInit(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hKey C.CK_OBJECT_HANDLE,
@@ -1536,7 +1911,7 @@ func (f *functionTable) C_DecryptInit(
 	return nil
 }
 
-func (f *functionTable) C_Decrypt(
+func (f pkcs11CAPIWrapper) C_Decrypt(
 	hSession C.CK_SESSION_HANDLE,
 	pEncryptedData C.CK_BYTE_PTR,
 	ulEncryptedDataLen C.CK_ULONG,
@@ -1557,7 +1932,7 @@ func (f *functionTable) C_Decrypt(
 	return nil
 }
 
-func (f *functionTable) C_DecryptUpdate(
+func (f pkcs11CAPIWrapper) C_DecryptUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pEncryptedPart C.CK_BYTE_PTR,
 	ulEncryptedPartLen C.CK_ULONG,
@@ -1578,7 +1953,7 @@ func (f *functionTable) C_DecryptUpdate(
 	return nil
 }
 
-func (f *functionTable) C_DecryptFinal(
+func (f pkcs11CAPIWrapper) C_DecryptFinal(
 	hSession C.CK_SESSION_HANDLE,
 	pLastPart C.CK_BYTE_PTR,
 	pulLastPartLen C.CK_ULONG_PTR,
@@ -1595,7 +1970,7 @@ func (f *functionTable) C_DecryptFinal(
 	return nil
 }
 
-func (f *functionTable) C_DigestInit(
+func (f pkcs11CAPIWrapper) C_DigestInit(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 ) error {
@@ -1610,7 +1985,7 @@ func (f *functionTable) C_DigestInit(
 	return nil
 }
 
-func (f *functionTable) C_Digest(
+func (f pkcs11CAPIWrapper) C_Digest(
 	hSession C.CK_SESSION_HANDLE,
 	pData C.CK_BYTE_PTR,
 	ulDataLen C.CK_ULONG,
@@ -1631,7 +2006,7 @@ func (f *functionTable) C_Digest(
 	return nil
 }
 
-func (f *functionTable) C_DigestUpdate(
+func (f pkcs11CAPIWrapper) C_DigestUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pPart C.CK_BYTE_PTR,
 	ulPartLen C.CK_ULONG,
@@ -1648,7 +2023,7 @@ func (f *functionTable) C_DigestUpdate(
 	return nil
 }
 
-func (f *functionTable) C_DigestKey(
+func (f pkcs11CAPIWrapper) C_DigestKey(
 	hSession C.CK_SESSION_HANDLE,
 	hKey C.CK_OBJECT_HANDLE,
 ) error {
@@ -1663,7 +2038,7 @@ func (f *functionTable) C_DigestKey(
 	return nil
 }
 
-func (f *functionTable) C_DigestFinal(
+func (f pkcs11CAPIWrapper) C_DigestFinal(
 	hSession C.CK_SESSION_HANDLE,
 	pDigest C.CK_BYTE_PTR,
 	pulDigestLen C.CK_ULONG_PTR,
@@ -1680,7 +2055,7 @@ func (f *functionTable) C_DigestFinal(
 	return nil
 }
 
-func (f *functionTable) C_SignInit(
+func (f pkcs11CAPIWrapper) C_SignInit(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hKey C.CK_OBJECT_HANDLE,
@@ -1697,7 +2072,7 @@ func (f *functionTable) C_SignInit(
 	return nil
 }
 
-func (f *functionTable) C_Sign(
+func (f pkcs11CAPIWrapper) C_Sign(
 	hSession C.CK_SESSION_HANDLE,
 	pData C.CK_BYTE_PTR,
 	ulDataLen C.CK_ULONG,
@@ -1718,7 +2093,7 @@ func (f *functionTable) C_Sign(
 	return nil
 }
 
-func (f *functionTable) C_SignUpdate(
+func (f pkcs11CAPIWrapper) C_SignUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pPart C.CK_BYTE_PTR,
 	ulPartLen C.CK_ULONG,
@@ -1735,7 +2110,7 @@ func (f *functionTable) C_SignUpdate(
 	return nil
 }
 
-func (f *functionTable) C_SignFinal(
+func (f pkcs11CAPIWrapper) C_SignFinal(
 	hSession C.CK_SESSION_HANDLE,
 	pSignature C.CK_BYTE_PTR,
 	pulSignatureLen C.CK_ULONG_PTR,
@@ -1752,7 +2127,7 @@ func (f *functionTable) C_SignFinal(
 	return nil
 }
 
-func (f *functionTable) C_SignRecoverInit(
+func (f pkcs11CAPIWrapper) C_SignRecoverInit(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hKey C.CK_OBJECT_HANDLE,
@@ -1769,7 +2144,7 @@ func (f *functionTable) C_SignRecoverInit(
 	return nil
 }
 
-func (f *functionTable) C_SignRecover(
+func (f pkcs11CAPIWrapper) C_SignRecover(
 	hSession C.CK_SESSION_HANDLE,
 	pData C.CK_BYTE_PTR,
 	ulDataLen C.CK_ULONG,
@@ -1790,7 +2165,7 @@ func (f *functionTable) C_SignRecover(
 	return nil
 }
 
-func (f *functionTable) C_VerifyInit(
+func (f pkcs11CAPIWrapper) C_VerifyInit(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hKey C.CK_OBJECT_HANDLE,
@@ -1807,7 +2182,7 @@ func (f *functionTable) C_VerifyInit(
 	return nil
 }
 
-func (f *functionTable) C_Verify(
+func (f pkcs11CAPIWrapper) C_Verify(
 	hSession C.CK_SESSION_HANDLE,
 	pData C.CK_BYTE_PTR,
 	ulDataLen C.CK_ULONG,
@@ -1828,7 +2203,7 @@ func (f *functionTable) C_Verify(
 	return nil
 }
 
-func (f *functionTable) C_VerifyUpdate(
+func (f pkcs11CAPIWrapper) C_VerifyUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pPart C.CK_BYTE_PTR,
 	ulPartLen C.CK_ULONG,
@@ -1845,7 +2220,7 @@ func (f *functionTable) C_VerifyUpdate(
 	return nil
 }
 
-func (f *functionTable) C_VerifyFinal(
+func (f pkcs11CAPIWrapper) C_VerifyFinal(
 	hSession C.CK_SESSION_HANDLE,
 	pSignature C.CK_BYTE_PTR,
 	ulSignatureLen C.CK_ULONG,
@@ -1862,7 +2237,7 @@ func (f *functionTable) C_VerifyFinal(
 	return nil
 }
 
-func (f *functionTable) C_VerifyRecoverInit(
+func (f pkcs11CAPIWrapper) C_VerifyRecoverInit(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hKey C.CK_OBJECT_HANDLE,
@@ -1879,7 +2254,7 @@ func (f *functionTable) C_VerifyRecoverInit(
 	return nil
 }
 
-func (f *functionTable) C_VerifyRecover(
+func (f pkcs11CAPIWrapper) C_VerifyRecover(
 	hSession C.CK_SESSION_HANDLE,
 	pSignature C.CK_BYTE_PTR,
 	ulSignatureLen C.CK_ULONG,
@@ -1900,7 +2275,7 @@ func (f *functionTable) C_VerifyRecover(
 	return nil
 }
 
-func (f *functionTable) C_DigestEncryptUpdate(
+func (f pkcs11CAPIWrapper) C_DigestEncryptUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pPart C.CK_BYTE_PTR,
 	ulPartLen C.CK_ULONG,
@@ -1921,7 +2296,7 @@ func (f *functionTable) C_DigestEncryptUpdate(
 	return nil
 }
 
-func (f *functionTable) C_DecryptDigestUpdate(
+func (f pkcs11CAPIWrapper) C_DecryptDigestUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pEncryptedPart C.CK_BYTE_PTR,
 	ulEncryptedPartLen C.CK_ULONG,
@@ -1942,7 +2317,7 @@ func (f *functionTable) C_DecryptDigestUpdate(
 	return nil
 }
 
-func (f *functionTable) C_SignEncryptUpdate(
+func (f pkcs11CAPIWrapper) C_SignEncryptUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pPart C.CK_BYTE_PTR,
 	ulPartLen C.CK_ULONG,
@@ -1963,7 +2338,7 @@ func (f *functionTable) C_SignEncryptUpdate(
 	return nil
 }
 
-func (f *functionTable) C_DecryptVerifyUpdate(
+func (f pkcs11CAPIWrapper) C_DecryptVerifyUpdate(
 	hSession C.CK_SESSION_HANDLE,
 	pEncryptedPart C.CK_BYTE_PTR,
 	ulEncryptedPartLen C.CK_ULONG,
@@ -1984,7 +2359,7 @@ func (f *functionTable) C_DecryptVerifyUpdate(
 	return nil
 }
 
-func (f *functionTable) C_GenerateKey(
+func (f pkcs11CAPIWrapper) C_GenerateKey(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	pTemplate C.CK_ATTRIBUTE_PTR,
@@ -2005,7 +2380,7 @@ func (f *functionTable) C_GenerateKey(
 	return nil
 }
 
-func (f *functionTable) C_GenerateKeyPair(
+func (f pkcs11CAPIWrapper) C_GenerateKeyPair(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	pPublicKeyTemplate C.CK_ATTRIBUTE_PTR,
@@ -2032,7 +2407,7 @@ func (f *functionTable) C_GenerateKeyPair(
 	return nil
 }
 
-func (f *functionTable) C_WrapKey(
+func (f pkcs11CAPIWrapper) C_WrapKey(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hWrappingKey C.CK_OBJECT_HANDLE,
@@ -2055,7 +2430,7 @@ func (f *functionTable) C_WrapKey(
 	return nil
 }
 
-func (f *functionTable) C_UnwrapKey(
+func (f pkcs11CAPIWrapper) C_UnwrapKey(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hUnwrappingKey C.CK_OBJECT_HANDLE,
@@ -2082,7 +2457,7 @@ func (f *functionTable) C_UnwrapKey(
 	return nil
 }
 
-func (f *functionTable) C_DeriveKey(
+func (f pkcs11CAPIWrapper) C_DeriveKey(
 	hSession C.CK_SESSION_HANDLE,
 	pMechanism C.CK_MECHANISM_PTR,
 	hBaseKey C.CK_OBJECT_HANDLE,
@@ -2105,7 +2480,7 @@ func (f *functionTable) C_DeriveKey(
 	return nil
 }
 
-func (f *functionTable) C_SeedRandom(
+func (f pkcs11CAPIWrapper) C_SeedRandom(
 	hSession C.CK_SESSION_HANDLE,
 	pSeed C.CK_BYTE_PTR,
 	ulSeedLen C.CK_ULONG,
@@ -2122,7 +2497,7 @@ func (f *functionTable) C_SeedRandom(
 	return nil
 }
 
-func (f *functionTable) C_GenerateRandom(
+func (f pkcs11CAPIWrapper) C_GenerateRandom(
 	hSession C.CK_SESSION_HANDLE,
 	RandomData C.CK_BYTE_PTR,
 	ulRandomLen C.CK_ULONG,
@@ -2139,7 +2514,7 @@ func (f *functionTable) C_GenerateRandom(
 	return nil
 }
 
-func (f *functionTable) C_GetFunctionStatus(
+func (f pkcs11CAPIWrapper) C_GetFunctionStatus(
 	hSession C.CK_SESSION_HANDLE,
 ) error {
 	rv := C._C_GetFunctionStatus(
@@ -2152,7 +2527,7 @@ func (f *functionTable) C_GetFunctionStatus(
 	return nil
 }
 
-func (f *functionTable) C_CancelFunction(
+func (f pkcs11CAPIWrapper) C_CancelFunction(
 	hSession C.CK_SESSION_HANDLE,
 ) error {
 	rv := C._C_CancelFunction(
@@ -2165,7 +2540,7 @@ func (f *functionTable) C_CancelFunction(
 	return nil
 }
 
-func (f *functionTable) C_WaitForSlotEvent(
+func (f pkcs11CAPIWrapper) C_WaitForSlotEvent(
 	flags C.CK_FLAGS,
 	pSlot C.CK_SLOT_ID_PTR,
 	pRserved C.CK_VOID_PTR,

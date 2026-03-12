@@ -239,16 +239,12 @@ func (s *Session) GenerateECDSAKeyPair(oid asn1enc.ObjectIdentifier, pubOpt []at
 		pubH  C.CK_OBJECT_HANDLE
 		privH C.CK_OBJECT_HANDLE
 	)
-	s.mtx.Lock()
-	err := s.ft.C_GenerateKeyPair(
+	if err := s.mod.api.C_GenerateKeyPair(
 		s.h, &mechanism,
 		&pubTpl[0], C.CK_ULONG(len(pubTpl)),
 		&privTpl[0], C.CK_ULONG(len(privTpl)),
 		&pubH, &privH,
-	)
-	s.mtx.Unlock()
-
-	if err != nil {
+	); err != nil {
 		return nil, nil, err
 	}
 
@@ -302,10 +298,7 @@ func (s *Session) CreateECDSAPublicKey(src *ecdsa.PublicKey, attrs ...attr.Attri
 	)
 	tpl := buildTemplate(attrs, &pinner)
 	var handle C.CK_OBJECT_HANDLE
-	s.mtx.Lock()
-	err := s.ft.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle)
-	s.mtx.Unlock()
-	if err != nil {
+	if err := s.mod.api.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle); err != nil {
 		return nil, err
 	}
 	obj, err := s.newObject(handle)

@@ -161,12 +161,22 @@ var goTplSrc = `package {{.Pkg}}
 */
 import "C"
 
-type functionTable struct {
+type pkcs11API interface {
+    {{- range .Funcs}}
+    {{mute_keywords .Name}}(
+    	{{- range .Parameters}}
+    	{{mute_keywords .Name}} {{if .Ptr}}*{{end}}C.{{.Type}},
+    	{{- end}}
+    ) error
+    {{- end}}
+}
+
+type pkcs11CAPIWrapper struct {
 	t *C.CK_FUNCTION_LIST
 }
 
 {{range .Funcs}}
-func (f *functionTable) {{mute_keywords .Name}}(
+func (f pkcs11CAPIWrapper) {{mute_keywords .Name}}(
 	{{- range .Parameters}}
 	{{mute_keywords .Name}} {{if .Ptr}}*{{end}}C.{{.Type}},
 	{{- end}}

@@ -6,6 +6,7 @@ package attr
 import "C"
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -20,10 +21,12 @@ type AttributeValue interface {
 	String() string
 	IsNil() bool
 
-	Allocate(size int)
+	Allocate(size int) error
 	Len() int
 	Ptr() unsafe.Pointer
 }
+
+var ErrAttributeSize = errors.New("pkcs11: invalid attribute size")
 
 type Attribute interface {
 	AttributeValue
@@ -100,8 +103,14 @@ func (t *Scalar[T]) String() string {
 	return fmt.Sprintf("%v", &t.Value)
 }
 
-func (t *Scalar[T]) IsNil() bool         { return !t.Valid }
-func (t *Scalar[T]) Allocate(size int)   { t.Valid = true }
+func (t *Scalar[T]) IsNil() bool { return !t.Valid }
+func (t *Scalar[T]) Allocate(size int) error {
+	if size != int(unsafe.Sizeof(t.Value)) {
+		return ErrAttributeSize
+	}
+	t.Valid = true
+	return nil
+}
 func (t *Scalar[T]) Len() int            { return int(unsafe.Sizeof(t.Value)) }
 func (t *Scalar[T]) Ptr() unsafe.Pointer { return unsafe.Pointer(&t.Value) }
 
@@ -118,8 +127,9 @@ func (t *Array[T, E]) String() string {
 
 func (t *Array[T, E]) IsNil() bool { return t.Value == nil }
 
-func (t *Array[T, E]) Allocate(size int) {
+func (t *Array[T, E]) Allocate(size int) error {
 	t.Value = make(T, size/int(unsafe.Sizeof(t.Value[0])))
+	return nil
 }
 
 func (t *Array[T, E]) Len() int {

@@ -54,6 +54,8 @@ var ErrNonUnique = errors.New("pkcs11: non unique public key object")
 // size claims. 1MB is wildly generous (RSA-8192 sigs are 1024 bytes).
 const maxTokenAlloc = 1 << 20
 
+const maxObjectsAtATime = 128
+
 // Module represents an opened shared library. Callers should pass
 // OptOsLockingOk to Open() to request OS locking support from the module.
 // Concurrent safety may depend on the underlying library.
@@ -62,7 +64,7 @@ type Module struct {
 	// when the Module is closed.
 	mod dynLibrary
 	// List of C functions provided by the module.
-	ft   functionTable
+	api  pkcs11API
 	info ModuleInfo
 }
 
@@ -93,7 +95,7 @@ func Open(path string, opt ...OpenOption) (*Module, error) {
 		return nil, err
 	}
 
-	ft := functionTable{t: funcs}
+	ft := pkcs11CAPIWrapper{t: funcs}
 
 	var initOptions openOptions
 	for _, o := range opt {
@@ -113,7 +115,7 @@ func Open(path string, opt ...OpenOption) (*Module, error) {
 
 	return &Module{
 		mod: module,
-		ft:  ft,
+		api: ft,
 		info: ModuleInfo{
 			CryptokiVersion: newVersion(info.cryptokiVersion),
 			Manufacturer:    trimPadding(info.manufacturerID[:]),
@@ -126,51 +128,34 @@ func Open(path string, opt ...OpenOption) (*Module, error) {
 // Close finalizes the module and releases any resources associated with the
 // shared library.
 func (m *Module) Close() error {
-	if err := m.ft.C_Finalize(nil); err != nil {
+	if err := m.api.C_Finalize(nil); err != nil {
 		return err
 	}
 	return m.mod.close()
 }
 
-// maxSlotCount caps the number of slots we'll allocate for. Prevents a
-// malicious module from triggering OOM via a huge reported count.
-const maxSlotCount = 1024
-
 // SlotIDs returns the IDs of all slots associated with this module, including
 // ones that haven't been initialized.
 func (m *Module) SlotIDs() ([]uint, error) {
 	var n C.CK_ULONG
-	if err := m.ft.C_GetSlotList(C.CK_FALSE, nil, &n); err != nil {
+	if err := m.api.C_GetSlotList(C.CK_FALSE, nil, &n); err != nil {
 		return nil, err
 	}
 	if n == 0 {
 		return []uint{}, nil
 	}
-
-	const maxRetries = 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if n == 0 {
-			return []uint{}, nil
-		}
-		if n > maxSlotCount {
-			return nil, fmt.Errorf("pkcs11: module reported %d slots, exceeds safety limit of %d", n, maxSlotCount)
-		}
-		l := make([]C.CK_SLOT_ID, int(n))
-		if err := m.ft.C_GetSlotList(C.CK_FALSE, &l[0], &n); err != nil {
-			if errors.Is(err, ErrBufferTooSmall) {
-				// Slot count grew between calls; n now holds the
-				// updated count. Retry with the larger buffer.
-				continue
-			}
-			return nil, err
-		}
-		ids := make([]uint, int(n))
-		for i := 0; i < int(n); i++ {
-			ids[i] = uint(l[i])
-		}
-		return ids, nil
+	if int(n)*int(sizeof[C.CK_SLOT_ID]()) > maxTokenAlloc {
+		return nil, fmt.Errorf("pkcs11: module reported %d slots, exceeds safety limit of %d", n, maxTokenAlloc/int(sizeof[C.CK_SLOT_ID]()))
 	}
-	return nil, errors.New("pkcs11: C_GetSlotList keeps returning CKR_BUFFER_TOO_SMALL")
+	l := make([]C.CK_SLOT_ID, int(n))
+	if err := m.api.C_GetSlotList(C.CK_FALSE, &l[0], &n); err != nil {
+		return nil, err
+	}
+	ids := make([]uint, int(n))
+	for i := 0; i < int(n); i++ {
+		ids[i] = uint(l[i])
+	}
+	return ids, nil
 }
 
 // Version holds a major and minor version.
@@ -335,7 +320,7 @@ func parseUTCTime(data *[16]C.uchar) time.Time {
 	return t
 }
 
-func slotInfo(ft functionTable, slotID C.CK_SLOT_ID) (*SlotInfo, error) {
+func slotInfo(ft pkcs11API, slotID C.CK_SLOT_ID) (*SlotInfo, error) {
 	var cSlotInfo C.CK_SLOT_INFO
 	if err := ft.C_GetSlotInfo(slotID, &cSlotInfo); err != nil {
 		return nil, err
@@ -381,7 +366,7 @@ func slotInfo(ft functionTable, slotID C.CK_SLOT_ID) (*SlotInfo, error) {
 
 // SlotInfo queries for information about the slot, such as the label.
 func (m *Module) SlotInfo(id uint) (*SlotInfo, error) {
-	return slotInfo(m.ft, C.CK_SLOT_ID(id))
+	return slotInfo(m.api, C.CK_SLOT_ID(id))
 }
 
 // UserType represents a user type
@@ -451,14 +436,14 @@ func (m *Module) NewSession(id uint, opts ...SessionOption) (*Session, error) {
 	)
 	flags |= so.flags
 
-	if err := m.ft.C_OpenSession(C.CK_SLOT_ID(id), flags, nil, nil, &h); err != nil {
+	if err := m.api.C_OpenSession(C.CK_SLOT_ID(id), flags, nil, nil, &h); err != nil {
 		return nil, err
 	}
 
-	s := &Session{ft: m.ft, h: h, slotID: id}
+	s := &Session{mod: m, h: h, slotID: id}
 	if so.pin != "" {
 		cPIN := []C.CK_UTF8CHAR(so.pin)
-		if err := s.ft.C_Login(s.h, C.CK_USER_TYPE(so.userType), &cPIN[0], C.CK_ULONG(len(cPIN))); err != nil {
+		if err := s.mod.api.C_Login(s.h, C.CK_USER_TYPE(so.userType), &cPIN[0], C.CK_ULONG(len(cPIN))); err != nil {
 			s.Close()
 			return nil, err
 		}
@@ -473,7 +458,7 @@ func (m *Module) NewSession(id uint, opts ...SessionOption) (*Session, error) {
 // cryptographic keys.
 type Session struct {
 	slotID uint
-	ft     functionTable
+	mod    *Module
 	h      C.CK_SESSION_HANDLE
 	mtx    sync.Mutex
 }
@@ -487,7 +472,7 @@ type sessionOptions struct {
 }
 
 func (s *Session) SlotInfo() (*SlotInfo, error) {
-	return slotInfo(s.ft, C.CK_SLOT_ID(s.slotID))
+	return slotInfo(s.mod.api, C.CK_SLOT_ID(s.slotID))
 }
 
 func (s *Session) SlotID() uint {
@@ -496,7 +481,7 @@ func (s *Session) SlotID() uint {
 
 // Close releases the slot session.
 func (s *Session) Close() error {
-	return s.ft.C_CloseSession(s.h)
+	return s.mod.api.C_CloseSession(s.h)
 }
 
 func (s *Session) newObject(o C.CK_OBJECT_HANDLE) (*Object, error) {
@@ -527,11 +512,7 @@ func (s *Session) NewObject(h uint) (*Object, error) {
 	return s.newObject(C.CK_OBJECT_HANDLE(h))
 }
 
-// Objects searches a slot for objects that match the given options, or all
-// objects if no options are provided.
-//
-// The returned objects behavior is undefined once the Session object is closed.
-func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) {
+func (s *Session) objects(filter ...attr.Attribute) (handles []C.CK_OBJECT_HANDLE, err error) {
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 
@@ -540,44 +521,50 @@ func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) 
 		attrs = buildTemplate(filter, &pinner)
 	}
 
-	// Hold the lock for the entire find sequence (Init + FindObjects +
-	// Final), then release before newObject calls which acquire the lock
-	// themselves via GetAttributes.
 	s.mtx.Lock()
+	defer s.mtx.Unlock()
 
 	if attrs != nil {
-		err = s.ft.C_FindObjectsInit(s.h, &attrs[0], C.CK_ULONG(len(attrs)))
+		err = s.mod.api.C_FindObjectsInit(s.h, &attrs[0], C.CK_ULONG(len(attrs)))
 	} else {
-		err = s.ft.C_FindObjectsInit(s.h, nil, 0)
+		err = s.mod.api.C_FindObjectsInit(s.h, nil, 0)
 	}
 	if err != nil {
-		s.mtx.Unlock()
 		return nil, err
 	}
+	defer func() {
+		if e := s.mod.api.C_FindObjectsFinal(s.h); e != nil && err == nil {
+			err = e
+		}
+	}()
 
-	var handles []C.CK_OBJECT_HANDLE
-	const objectsAtATime = 16
+	handles = make([]C.CK_OBJECT_HANDLE, 0, maxObjectsAtATime)
+	var handleBuf [maxObjectsAtATime]C.CK_OBJECT_HANDLE
 	for {
-		cObjHandles := make([]C.CK_OBJECT_HANDLE, objectsAtATime)
 		var n C.CK_ULONG
-		if err := s.ft.C_FindObjects(s.h, &cObjHandles[0], C.CK_ULONG(objectsAtATime), &n); err != nil {
-			s.ft.C_FindObjectsFinal(s.h)
-			s.mtx.Unlock()
+		if err := s.mod.api.C_FindObjects(s.h, &handleBuf[0], C.CK_ULONG(maxObjectsAtATime), &n); err != nil {
 			return nil, err
 		}
 		if n == 0 {
 			break
 		}
-		handles = append(handles, cObjHandles[:int(n)]...)
+		handles = append(handles, handleBuf[:int(n)]...)
+		if len(handles)*int(sizeof[C.CK_OBJECT_HANDLE]()) > maxTokenAlloc {
+			return nil, fmt.Errorf("pkcs11: token returned object count exceeding safety limit of %d", maxTokenAlloc/int(sizeof[C.CK_OBJECT_HANDLE]()))
+		}
 	}
+	return handles, err
+}
 
-	ferr := s.ft.C_FindObjectsFinal(s.h)
-	s.mtx.Unlock()
-
-	if ferr != nil {
-		return nil, ferr
+// Objects searches a slot for objects that match the given options, or all
+// objects if no options are provided.
+//
+// The returned objects behavior is undefined once the Session object is closed.
+func (s *Session) Objects(filter ...attr.Attribute) (objs []*Object, err error) {
+	handles, err := s.objects(filter...)
+	if err != nil {
+		return nil, err
 	}
-
 	for _, h := range handles {
 		o, err := s.newObject(h)
 		if err != nil {
@@ -626,15 +613,11 @@ func (o *Object) GetAttributes(attributes ...attr.Attribute) error {
 	if len(attributes) == 0 {
 		return nil
 	}
-
-	o.slot.mtx.Lock()
-	defer o.slot.mtx.Unlock()
-
 	attrs := make([]C.CK_ATTRIBUTE, len(attributes))
 	for i, a := range attributes {
 		attrs[i]._type = C.CK_ATTRIBUTE_TYPE(a.Type())
 	}
-	if err := o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
+	if err := o.slot.mod.api.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs))); err != nil && !errors.Is(err, ErrAttributeTypeInvalid) && !errors.Is(err, ErrAttributeSensitive) {
 		return err
 	}
 	var pinner runtime.Pinner
@@ -644,22 +627,22 @@ func (o *Object) GetAttributes(attributes ...attr.Attribute) error {
 			if ln > maxTokenAlloc {
 				return fmt.Errorf("pkcs11: attribute 0x%08x: token reported %d bytes, exceeds safety limit of %d", a.Type(), uint64(ln), maxTokenAlloc)
 			}
-			size := int(ln)
-			a.Allocate(size)
-			capacity := a.Len()
-			if size > capacity {
-				return fmt.Errorf("pkcs11: attribute 0x%08x: token reported %d bytes but destination holds %d", a.Type(), ln, capacity)
+			if err := a.Allocate(int(ln)); err != nil {
+				// can happen with scalar types if the type was incorrectly assumed
+				return err
 			}
-			// Clamp to destination capacity so the token cannot overwrite
-			// adjacent memory on the second call.
-			attrs[i].ulValueLen = C.CK_ULONG(capacity)
-			if ptr := a.Ptr(); ptr != nil {
+			if int(ln) != a.Len() {
+				return fmt.Errorf("pkcs11: attribute 0x%08x: token reported %d bytes but destination holds %d", a.Type(), ln, a.Len())
+			}
+			ptr := a.Ptr()
+			if ptr != nil {
 				pinner.Pin(ptr)
-				attrs[i].pValue = C.CK_VOID_PTR(ptr)
 			}
+			// pass nil for zero length values
+			attrs[i].pValue = C.CK_VOID_PTR(ptr)
 		}
 	}
-	return o.slot.ft.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
+	return o.slot.mod.api.C_GetAttributeValue(o.slot.h, o.h, &attrs[0], C.CK_ULONG(len(attrs)))
 }
 
 // Label returns a string value attached to an object, which can be used to
@@ -723,75 +706,81 @@ func newPublicKey(o *Object, kt attr.KType) (PublicKey, error) {
 }
 
 func (o *Object) sign(m *C.CK_MECHANISM, digest []byte) ([]byte, error) {
+	if len(digest) == 0 {
+		return nil, errors.New("pkcs11: empty or nil input digest")
+	}
 	o.slot.mtx.Lock()
 	defer o.slot.mtx.Unlock()
 
-	if err := o.slot.ft.C_SignInit(o.slot.h, m, o.h); err != nil {
+	if err := o.slot.mod.api.C_SignInit(o.slot.h, m, o.h); err != nil {
 		return nil, err
 	}
 	var sigLen C.CK_ULONG
-	digestPtr := bytePtr(digest)
-	if err := o.slot.ft.C_Sign(o.slot.h, digestPtr, C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
+	if err := o.slot.mod.api.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), nil, &sigLen); err != nil {
 		return nil, err
 	}
 	if sigLen == 0 {
-		return nil, nil
+		return nil, errors.New("pkcs11: token returned empty signature")
 	}
 	if sigLen > maxTokenAlloc {
 		return nil, fmt.Errorf("pkcs11: token reported signature length %d bytes, exceeds safety limit of %d", sigLen, maxTokenAlloc)
 	}
 	sig := make([]byte, sigLen)
-	if err := o.slot.ft.C_Sign(o.slot.h, digestPtr, C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
+	if err := o.slot.mod.api.C_Sign(o.slot.h, (*C.CK_BYTE)(&digest[0]), C.CK_ULONG(len(digest)), (*C.CK_BYTE)(&sig[0]), &sigLen); err != nil {
 		return nil, err
 	}
 	return sig[:sigLen], nil
 }
 
 func (o *Object) decrypt(m *C.CK_MECHANISM, ciphertext []byte) ([]byte, error) {
+	if len(ciphertext) == 0 {
+		return nil, errors.New("pkcs11: empty or nil input ciphertext")
+	}
 	o.slot.mtx.Lock()
 	defer o.slot.mtx.Unlock()
 
-	if err := o.slot.ft.C_DecryptInit(o.slot.h, m, o.h); err != nil {
+	if err := o.slot.mod.api.C_DecryptInit(o.slot.h, m, o.h); err != nil {
 		return nil, err
 	}
 	var plainLen C.CK_ULONG
-	ciphertextPtr := bytePtr(ciphertext)
-	if err := o.slot.ft.C_Decrypt(o.slot.h, ciphertextPtr, C.CK_ULONG(len(ciphertext)), nil, &plainLen); err != nil {
+	if err := o.slot.mod.api.C_Decrypt(o.slot.h, (*C.CK_BYTE)(&ciphertext[0]), C.CK_ULONG(len(ciphertext)), nil, &plainLen); err != nil {
 		return nil, err
 	}
 	if plainLen == 0 {
-		return nil, nil
+		return nil, errors.New("pkcs11: token returned empty decrypted data")
 	}
 	if plainLen > maxTokenAlloc {
 		return nil, fmt.Errorf("pkcs11: token reported plaintext length %d bytes, exceeds safety limit of %d", plainLen, maxTokenAlloc)
 	}
 	plainText := make([]byte, plainLen)
-	if err := o.slot.ft.C_Decrypt(o.slot.h, ciphertextPtr, C.CK_ULONG(len(ciphertext)), (*C.CK_BYTE)(&plainText[0]), &plainLen); err != nil {
+	if err := o.slot.mod.api.C_Decrypt(o.slot.h, (*C.CK_BYTE)(&ciphertext[0]), C.CK_ULONG(len(ciphertext)), (*C.CK_BYTE)(&plainText[0]), &plainLen); err != nil {
 		return nil, err
 	}
 	return plainText[:plainLen], nil
 }
 
 func (o *Object) encrypt(m *C.CK_MECHANISM, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, errors.New("pkcs11: empty or nil input data")
+	}
 	o.slot.mtx.Lock()
 	defer o.slot.mtx.Unlock()
 
-	if err := o.slot.ft.C_EncryptInit(o.slot.h, m, o.h); err != nil {
+	if err := o.slot.mod.api.C_EncryptInit(o.slot.h, m, o.h); err != nil {
 		return nil, err
 	}
 	var ciphertextLen C.CK_ULONG
-	dataPtr := bytePtr(data)
-	if err := o.slot.ft.C_Encrypt(o.slot.h, dataPtr, C.CK_ULONG(len(data)), nil, &ciphertextLen); err != nil {
+	if err := o.slot.mod.api.C_Encrypt(o.slot.h, (*C.CK_BYTE)(&data[0]), C.CK_ULONG(len(data)), nil, &ciphertextLen); err != nil {
 		return nil, err
 	}
 	if ciphertextLen == 0 {
-		return nil, nil
+		return nil, errors.New("pkcs11: token returned empty ciphertext")
 	}
 	if ciphertextLen > maxTokenAlloc {
 		return nil, fmt.Errorf("pkcs11: token reported ciphertext length %d bytes, exceeds safety limit of %d", ciphertextLen, maxTokenAlloc)
 	}
 	ciphertext := make([]byte, ciphertextLen)
-	if err := o.slot.ft.C_Encrypt(o.slot.h, dataPtr, C.CK_ULONG(len(data)), (*C.CK_BYTE)(&ciphertext[0]), &ciphertextLen); err != nil {
+	if err := o.slot.mod.api.C_Encrypt(o.slot.h, (*C.CK_BYTE)(&data[0]), C.CK_ULONG(len(data)), (*C.CK_BYTE)(&ciphertext[0]), &ciphertextLen); err != nil {
 		return nil, err
 	}
 	return ciphertext[:ciphertextLen], nil
@@ -802,17 +791,17 @@ func (o *Object) wrap(m *C.CK_MECHANISM, tgt *Object) ([]byte, error) {
 	defer o.slot.mtx.Unlock()
 
 	var wrappedLen C.CK_ULONG
-	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, nil, &wrappedLen); err != nil {
+	if err := o.slot.mod.api.C_WrapKey(o.slot.h, m, o.h, tgt.h, nil, &wrappedLen); err != nil {
 		return nil, err
 	}
 	if wrappedLen == 0 {
-		return nil, nil
+		return nil, errors.New("pkcs11: token returned empty wrapped key")
 	}
 	if wrappedLen > maxTokenAlloc {
 		return nil, fmt.Errorf("pkcs11: token reported wrapped key length %d bytes, exceeds safety limit of %d", wrappedLen, maxTokenAlloc)
 	}
 	wrappedKey := make([]byte, wrappedLen)
-	if err := o.slot.ft.C_WrapKey(o.slot.h, m, o.h, tgt.h, (*C.CK_BYTE)(&wrappedKey[0]), &wrappedLen); err != nil {
+	if err := o.slot.mod.api.C_WrapKey(o.slot.h, m, o.h, tgt.h, (*C.CK_BYTE)(&wrappedKey[0]), &wrappedLen); err != nil {
 		return nil, err
 	}
 	return wrappedKey[:wrappedLen], nil

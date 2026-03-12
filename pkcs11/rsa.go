@@ -7,6 +7,7 @@ import "C"
 import (
 	"crypto"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -50,17 +51,42 @@ func hashMechanism(h crypto.Hash) (C.CK_MECHANISM_TYPE, C.CK_RSA_PKCS_MGF_TYPE, 
 	}
 }
 
-func (r *RSAPrivateKey) SignPSS(hash crypto.Hash, digest []byte, saltLength int) ([]byte, error) {
+func (r *RSAPrivateKey) pssMaxSaltLength(hash crypto.Hash) (int, error) {
+	saltLength := (r.N.BitLen()-1+7)/8 - 2 - hash.Size()
 	if saltLength < 0 {
-		return nil, fmt.Errorf("pkcs11: negative PSS salt length %d (use Sign() with *rsa.PSSOptions for sentinel values)", saltLength)
+		return 0, errors.New("pkcs11: hash is too long for the given key size")
 	}
+	return saltLength, nil
+}
+
+// resolvePSSSaltLength translates crypto/rsa sentinel values into concrete
+// byte lengths before they cross the C boundary. Passing a negative int as
+// CK_ULONG wraps to a huge value and produces cryptic HSM errors.
+func (r *RSAPrivateKey) resolvePSSSaltLength(hash crypto.Hash, saltLength int) (int, error) {
+	// Validate hash before calling hash.Size(), which panics on unsupported values.
+	if _, _, err := hashMechanism(hash); err != nil {
+		return 0, err
+	}
+	switch {
+	case saltLength == rsa.PSSSaltLengthAuto:
+		return r.pssMaxSaltLength(hash)
+	case saltLength == rsa.PSSSaltLengthEqualsHash:
+		return hash.Size(), nil
+	case saltLength < 0:
+		return 0, fmt.Errorf("pkcs11: invalid PSS salt length %d", saltLength)
+	default:
+		return saltLength, nil
+	}
+}
+
+func (r *RSAPrivateKey) SignPSS(hash crypto.Hash, digest []byte, saltLength int) ([]byte, error) {
+	saltLength, err := r.resolvePSSSaltLength(hash, saltLength)
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_RSA_PKCS_PSS,
 	}
 	params := C.CK_RSA_PKCS_PSS_PARAMS{
 		sLen: C.CK_ULONG(saltLength),
 	}
-	var err error
 	params.hashAlg, params.mgf, err = hashMechanism(hash)
 	if err != nil {
 		return nil, err
@@ -83,41 +109,13 @@ func (r *RSAPrivateKey) SignPKCS1v15(digest []byte) ([]byte, error) {
 
 func (r *RSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if pssOpts, ok := opts.(*rsa.PSSOptions); ok {
-		saltLen, err := resolvePSSSaltLength(pssOpts.SaltLength, opts.HashFunc(), r.N.BitLen())
+		saltLen, err := r.resolvePSSSaltLength(pssOpts.Hash, pssOpts.SaltLength)
 		if err != nil {
 			return nil, err
 		}
 		return r.SignPSS(pssOpts.Hash, digest, saltLen)
 	}
 	return r.SignPKCS1v15(digest)
-}
-
-// resolvePSSSaltLength translates crypto/rsa sentinel values into concrete
-// byte lengths before they cross the C boundary. Passing a negative int as
-// CK_ULONG wraps to a huge value and produces cryptic HSM errors.
-func resolvePSSSaltLength(saltLength int, hash crypto.Hash, keyBits int) (int, error) {
-	// Validate hash before calling hash.Size(), which panics on unsupported values.
-	if _, _, err := hashMechanism(hash); err != nil {
-		return 0, err
-	}
-	switch saltLength {
-	case rsa.PSSSaltLengthAuto:
-		// PKCS#11 has no equivalent of PSSSaltLengthAuto. Use the maximum
-		// salt length: key_bytes - hash_bytes - 2
-		keyBytes := (keyBits + 7) / 8
-		maxSalt := keyBytes - hash.Size() - 2
-		if maxSalt < 0 {
-			return 0, fmt.Errorf("pkcs11: key too short for PSS with %v", hash)
-		}
-		return maxSalt, nil
-	case rsa.PSSSaltLengthEqualsHash:
-		return hash.Size(), nil
-	default:
-		if saltLength < 0 {
-			return 0, fmt.Errorf("pkcs11: invalid PSS salt length %d", saltLength)
-		}
-		return saltLength, nil
-	}
 }
 
 func (r *RSAPrivateKey) DecryptOAEP(hash crypto.Hash, ciphertext []byte, label []byte) ([]byte, error) {
@@ -129,7 +127,7 @@ func (r *RSAPrivateKey) DecryptOAEP(hash crypto.Hash, ciphertext []byte, label [
 	params := C.CK_RSA_PKCS_OAEP_PARAMS{
 		source: C.CKZ_DATA_SPECIFIED, // SoftSHM2 requires this field to be always set
 	}
-	if len(label) > 0 {
+	if len(label) != 0 {
 		params.pSourceData = C.CK_VOID_PTR(&label[0])
 		params.ulSourceDataLen = C.CK_ULONG(len(label))
 		pinner.Pin(&label[0])
@@ -202,7 +200,7 @@ func initOAEP(hash crypto.Hash, label []byte, pinner *runtime.Pinner) (*C.CK_MEC
 	params := C.CK_RSA_PKCS_OAEP_PARAMS{
 		source: C.CKZ_DATA_SPECIFIED, // SoftSHM2 requires this field to be always set
 	}
-	if len(label) > 0 {
+	if len(label) != 0 {
 		params.pSourceData = C.CK_VOID_PTR(&label[0])
 		params.ulSourceDataLen = C.CK_ULONG(len(label))
 		pinner.Pin(&label[0])
@@ -286,15 +284,12 @@ func (s *Session) GenerateRSAKeyPair(bits, exp int, pubOpt, privOpt []attr.Attri
 		privH C.CK_OBJECT_HANDLE
 	)
 
-	s.mtx.Lock()
-	err := s.ft.C_GenerateKeyPair(
+	if err := s.mod.api.C_GenerateKeyPair(
 		s.h, &mechanism,
 		&pubTmpl[0], C.CK_ULONG(len(pubTmpl)),
 		&privTmpl[0], C.CK_ULONG(len(privTmpl)),
 		&pubH, &privH,
-	)
-	s.mtx.Unlock()
-	if err != nil {
+	); err != nil {
 		return nil, nil, err
 	}
 
@@ -334,10 +329,7 @@ func (s *Session) CreateRSAPublicKey(src *rsa.PublicKey, opt ...attr.Attribute) 
 	tpl := buildTemplate(opt, &pinner)
 
 	var handle C.CK_OBJECT_HANDLE
-	s.mtx.Lock()
-	err := s.ft.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle)
-	s.mtx.Unlock()
-	if err != nil {
+	if err := s.mod.api.C_CreateObject(s.h, &tpl[0], C.CK_ULONG(len(tpl)), &handle); err != nil {
 		return nil, err
 	}
 	obj, err := s.newObject(handle)
