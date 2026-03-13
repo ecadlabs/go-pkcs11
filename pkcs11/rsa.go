@@ -81,6 +81,9 @@ func (r *RSAPrivateKey) resolvePSSSaltLength(hash crypto.Hash, saltLength int) (
 
 func (r *RSAPrivateKey) SignPSS(hash crypto.Hash, digest []byte, saltLength int) ([]byte, error) {
 	saltLength, err := r.resolvePSSSaltLength(hash, saltLength)
+	if err != nil {
+		return nil, err
+	}
 	m := C.CK_MECHANISM{
 		mechanism: C.CKM_RSA_PKCS_PSS,
 	}
