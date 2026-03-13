@@ -161,6 +161,14 @@ func TestIsOnCurveRejectsOrigin(t *testing.T) {
 }
 
 func TestIsOnCurveRejectsUnknownCurve(t *testing.T) {
-	fake := &elliptic.CurveParams{Name: "unknown"}
+	fake := &elliptic.CurveParams{
+		Name:    "unknown",
+		P:       new(big.Int),
+		N:       new(big.Int),
+		B:       new(big.Int),
+		Gx:      new(big.Int),
+		Gy:      new(big.Int),
+		BitSize: 0,
+	}
 	assert.False(t, isOnCurve(fake, big.NewInt(1), big.NewInt(1)))
 }

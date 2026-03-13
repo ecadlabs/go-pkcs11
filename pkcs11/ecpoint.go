@@ -3,6 +3,8 @@ package pkcs11
 import (
 	"crypto/elliptic"
 	"math/big"
+
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 // marshalECPoint encodes an elliptic curve point in uncompressed form
@@ -32,15 +34,12 @@ func unmarshalECPoint(curve elliptic.Curve, data []byte) (x, y *big.Int) {
 	if len(data) != 1+2*byteLen || data[0] != 4 {
 		return nil, nil
 	}
-
 	x = new(big.Int).SetBytes(data[1 : 1+byteLen])
 	y = new(big.Int).SetBytes(data[1+byteLen:])
-
 	if x.Cmp(params.P) >= 0 || y.Cmp(params.P) >= 0 {
 		return nil, nil
 	}
-
-	if !isOnCurve(params, x, y) {
+	if !isOnCurve(curve, x, y) {
 		return nil, nil
 	}
 	return x, y
@@ -53,17 +52,18 @@ func unmarshalECPoint(curve elliptic.Curve, data []byte) (x, y *big.Int) {
 // derived from the curve name:
 //   - NIST P-224, P-256, P-384, P-521: a = -3 (mod p), per FIPS 186-4 Section D.1
 //   - secp256k1: a = 0, per SEC 2, Version 2.0, Section 2.4.1
-func isOnCurve(params *elliptic.CurveParams, x, y *big.Int) bool {
-	var a big.Int
-	switch params.Name {
-	case "P-224", "P-256", "P-384", "P-521":
-		a.Sub(params.P, big.NewInt(3))
-	case "secp256k1":
-		// a = 0, zero value is correct
+func isOnCurve(curve elliptic.Curve, x, y *big.Int) bool {
+	var isKoblitz bool
+	// secp256k1 implementation package can be changed in the future and different implementations name the curve differently,
+	// so we can't rely on curve name for identification
+	switch {
+	case curveEq(curve, elliptic.P224()) || curveEq(curve, elliptic.P256()) || curveEq(curve, elliptic.P384()) || curveEq(curve, elliptic.P521()):
+	case curveEq(curve, secp256k1.S256()):
+		isKoblitz = true
 	default:
 		return false
 	}
-
+	params := curve.Params()
 	p := params.P
 
 	// lhs = y^2 mod p
@@ -77,10 +77,12 @@ func isOnCurve(params *elliptic.CurveParams, x, y *big.Int) bool {
 	x2.Mod(&x2, p)
 	rhs.Mul(&x2, x)
 	rhs.Mod(&rhs, p)
-
-	var ax big.Int
-	ax.Mul(&a, x)
-	rhs.Add(&rhs, &ax)
+	if !isKoblitz {
+		var ax big.Int
+		ax.Mul(x, big.NewInt(3))
+		rhs.Sub(&rhs, &ax)
+		rhs.Mod(&rhs, p)
+	}
 	rhs.Add(&rhs, params.B)
 	rhs.Mod(&rhs, p)
 
